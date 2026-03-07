@@ -6,6 +6,7 @@ import { importCommand } from "./commands/import.js";
 import { mappingsCommand } from "./commands/mappings.js";
 import { networthCommand } from "./commands/networth.js";
 import { snapshotCommand } from "./commands/snapshot.js";
+import { superCommand } from "./commands/super.js";
 import { syncCommand } from "./commands/sync.js";
 
 const program = new Command()
@@ -20,5 +21,6 @@ program.addCommand(exportCommand);
 program.addCommand(importCommand);
 program.addCommand(snapshotCommand);
 program.addCommand(networthCommand);
+program.addCommand(superCommand);
 
 program.parse();
