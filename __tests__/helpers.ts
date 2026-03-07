@@ -2,12 +2,14 @@ import { createId } from "@paralleldrive/cuid2";
 import type { AppConfig } from "../src/config.js";
 import { createTestCorpus } from "../src/corpus/client.js";
 import { type AppContext, createTestDb } from "../src/db/client.js";
+import { InMemoryDocumentParser } from "../src/providers/in-memory/document-parser.js";
 import { InMemoryBankProvider } from "../src/providers/in-memory/provider.js";
 import { InMemorySuperProvider } from "../src/providers/in-memory/super-provider.js";
 import type {
 	AccountBalance,
 	AccountInfo,
 	ContributionType,
+	ParsedDocument,
 	RawTransaction,
 	SuperBalance,
 	SuperContribution,
@@ -127,4 +129,44 @@ export function createTestSuperProvider(options?: {
 	if (options?.balance) provider.setBalance(options.balance);
 	if (options?.contributions) provider.addContributions(...options.contributions);
 	return provider;
+}
+
+export function createTestDocumentParser(options?: {
+	defaultResult?: ParsedDocument;
+}): InMemoryDocumentParser {
+	const parser = new InMemoryDocumentParser();
+	if (options?.defaultResult) parser.setDefaultResult(options.defaultResult);
+	return parser;
+}
+
+export function makeParsedDocument(overrides?: Partial<ParsedDocument>): ParsedDocument {
+	return {
+		transactions: overrides?.transactions ?? [
+			makeTransaction({
+				id: "ai-parsed-1",
+				description: "WOOLWORTHS 1234 BRISBANE",
+				amount: 42.5,
+				direction: "debit",
+				transactionDate: "2026-03-01",
+				postDate: "2026-03-01",
+				accountId: "pending",
+			}),
+			makeTransaction({
+				id: "ai-parsed-2",
+				description: "MCDONALDS SOUTH BRISBANE",
+				amount: 15.0,
+				direction: "debit",
+				transactionDate: "2026-03-02",
+				postDate: "2026-03-02",
+				accountId: "pending",
+			}),
+		],
+		account: overrides?.account ?? {
+			name: "Everyday Account",
+			institution: "BankSA",
+			type: "transaction",
+		},
+		notes: overrides?.notes ?? [],
+		rawResponse: overrides?.rawResponse ?? '{"test": "response"}',
+	};
 }

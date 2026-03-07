@@ -3,19 +3,18 @@
 ## Project Overview
 
 Personal finance CLI tool. SQLite (Drizzle ORM) is the source of truth for queries.
-Corpus stores are the source of truth for raw API data and sync results (versioned, with lineage).
-Tracks: bank transactions, savings balances, super, investments, net worth.
+Corpus stores are the source of truth for raw document data, AI parse results, and sync results (versioned, with lineage).
+Ingests bank documents (PDFs, CSVs, images) using Claude for extraction. Tracks: bank transactions, savings balances, super, investments, net worth.
 
 ## Tech Stack
 
 - Runtime: Bun
 - Database: SQLite + Drizzle ORM (`drizzle-orm/bun-sqlite`)
-- Data stores: `@f0rbit/corpus` stores (`raw-transactions`, `raw-accounts`, `raw-balances`, `sync-results`, `raw-contributions`)
+- Data stores: `@f0rbit/corpus` stores (`raw-transactions`, `raw-accounts`, `raw-balances`, `sync-results`, `raw-contributions`, `raw-documents`, `ai-parse-results`, `computation-snapshots`)
+- AI parsing: `@anthropic-ai/sdk` (Claude for document extraction)
 - Error handling: `@f0rbit/corpus` `Result<T, E>` types -- never throw
   - `pipe()` for chaining, `flat_map()` for fallible steps
-  - `fetch_result()` for HTTP calls (never raw fetch)
   - `try_catch` / `try_catch_async` for wrapping side effects
-  - `Semaphore` for rate limiting (used in `BasiqClient` with concurrency 10)
   - `parallel_map()` for concurrent operations
 - CLI: Commander (`commander`)
 - Config: JSONC (`jsonc-parser`) + JSON Schema
@@ -29,37 +28,36 @@ Tracks: bank transactions, savings balances, super, investments, net worth.
 budget-sync/
   src/
     index.ts                          -- CLI entrypoint (Commander program, registers commands)
-    config.ts                         -- Zod schemas + loadConfig() / getBasiqApiKey()
+    config.ts                         -- Zod schemas + loadConfig() / getAnthropicApiKey()
     errors.ts                         -- Discriminated union error types + constructor helpers
     commands/
-      sync.ts                         -- `budget-sync sync` command handler
+      ingest.ts                       -- `budget ingest` command (AI + CSV fast path)
       accounts.ts                     -- `budget-sync accounts` command handler
       mappings.ts                     -- `budget-sync mappings` command handler
       export.ts                       -- `budget-sync export` command handler
-      import.ts                       -- `budget-sync import` command handler
       snapshot.ts                       -- `budget-sync snapshot` command handler
       networth.ts                       -- `budget-sync networth` command handler
       super.ts                          -- `budget-sync super` command handler (balance, contributions, import)
     corpus/
       index.ts                        -- Barrel: re-exports AppCorpus, stores, snapshot types
       client.ts                       -- buildCorpus(), createCorpus(dataDir), createTestCorpus()
-      stores.ts                       -- define_store() calls for all 5 stores
+      stores.ts                       -- define_store() calls for all 8 stores
       schemas.ts                      -- Zod schemas for snapshot payloads
     db/
       schema.ts                       -- Drizzle table definitions (syncRuns, accounts, transactions, snapshots, holdings, contributions)
       client.ts                       -- createDb(path), createTestDb(), AppContext { db, corpus }
     providers/
-      types.ts                        -- BankProvider interface, SuperProvider interface, value types (RawTransaction, CategorizedTransaction, SuperBalance, SuperContribution, etc.), enum arrays (CATEGORIES, ACCOUNT_TYPES, CONTRIBUTION_TYPES, etc.), InvestmentProvider (forward-compat)
+      types.ts                        -- BankProvider interface, SuperProvider interface, DocumentParser interface, value types (RawTransaction, CategorizedTransaction, SuperBalance, SuperContribution, etc.), enum arrays (CATEGORIES, ACCOUNT_TYPES, CONTRIBUTION_TYPES, etc.), InvestmentProvider (forward-compat)
       index.ts                        -- createProvider(config) factory, re-exports all provider classes
-      basiq/
-        client.ts                     -- BasiqClient: authenticate (JWT), get<T>(), getAllPages(), Semaphore rate limiter
-        provider.ts                   -- BasiqBankProvider implements BankProvider
-        types.ts                      -- Zod schemas for Basiq API responses (accounts, transactions, enrichment, token)
+      utils.ts                        -- generateExternalId() utility
+      ai/
+        parser.ts                     -- AnthropicDocumentParser: Claude API document parsing
       csv/
         provider.ts                   -- CsvBankProvider: parses DD/MM/YYYY CSV, generates sha256 external IDs
       in-memory/
         provider.ts                   -- InMemoryBankProvider: arrays + fail flags for testing
         super-provider.ts               -- InMemorySuperProvider for testing
+        document-parser.ts             -- InMemoryDocumentParser for testing
       manual-super/
         provider.ts                   -- ManualSuperProvider: JSON file import
     pipeline/
@@ -67,9 +65,9 @@ budget-sync/
       filter.ts                       -- filterTransaction(tx, exclusions) -> Result<RawTransaction, ExcludedTransaction>
       rent.ts                         -- isRentTransaction(), calculateRentAmount(), handleRent()
       local-mappings.ts               -- loadMappings(path?), matchTransaction(), applyMapping()
-      enrich-mapper.ts                -- mapEnrichmentCategory(), applyEnrichment(), createFallback()
+      fallback.ts                     -- createFallback()
     services/
-      sync-service.ts                 -- syncTransactions(ctx, provider, config, options) -- 10-step orchestrator
+      ingest-service.ts               -- 14-step document ingestion orchestrator
       account-service.ts              -- upsertAccount(), listAccounts(), deactivateAccount(), findAccountByExternalId()
       transaction-service.ts          -- createTransaction(), getTransactions(filters), getUncategorized()
       export-service.ts               -- exportToObsidian(db, vaultPath, budgetDir, options)
@@ -79,6 +77,7 @@ budget-sync/
       super-sync-service.ts             -- syncSuper() import orchestrator
   __tests__/
     integration/                      -- Integration tests (in-memory DB + corpus)
+      ingest-workflow.test.ts           -- Ingest pipeline integration tests
       snapshot.test.ts                  -- Snapshot service + sync integration (10 scenarios)
       networth.test.ts                  -- Net worth calculation tests (8 scenarios, includes super)
       super-import.test.ts              -- Super import integration tests (11 scenarios)
@@ -98,7 +97,7 @@ budget-sync/
 ### Data Flow
 
 ```
-BankProvider -> corpus raw stores -> pipeline (pure) -> corpus sync-results -> SQLite
+Document (PDF/CSV/image) -> corpus raw-documents -> AI parser -> corpus ai-parse-results -> pipeline (pure) -> corpus sync-results -> SQLite -> corpus computation-snapshots
 ```
 
 ### Stores
@@ -112,18 +111,20 @@ Defined in `src/corpus/stores.ts` using `define_store()` + `json_codec()`:
 | `raw-balances` | `RawBalancesSnapshot` | `rawBalancesSnapshotSchema` | Raw balance snapshots per fetch |
 | `sync-results` | `SyncResultSnapshot` | `syncResultSnapshotSchema` | Categorized pipeline output with lineage |
 | `raw-contributions` | `RawContributionsSnapshot` | `rawContributionsSnapshotSchema` | Raw super contribution data per import |
+| `raw-documents` | `RawDocumentSnapshot` | `rawDocumentSnapshotSchema` | Full document content (base64 for binary, text for CSV) |
+| `ai-parse-results` | `AiParseResultSnapshot` | `aiParseResultSnapshotSchema` | AI-extracted transactions and account info |
+| `computation-snapshots` | `ComputationSnapshot` | `computationSnapshotSchema` | Net worth state after ingestion |
 
 ### Lineage
 
-`sync-results` snapshots reference their source `raw-transactions` via the `parents` array on `put()`:
+Ingestion creates a 4-store lineage chain: `raw-documents` → `ai-parse-results` → `sync-results` → `computation-snapshots`.
+
+Each store references its parents via the `parents` array on `put()`:
 
 ```ts
-await ctx.corpus.stores["sync-results"].put(syncResultSnapshot, {
-  parents: rawSnapshotVersions.map((version) => ({
-    store_id: "raw-transactions",
-    version,
-  })),
-  tags: [`sync-run:${syncRunId}`, `provider:${provider.name}`],
+await ctx.corpus.stores["ai-parse-results"].put(parseResultSnapshot, {
+  parents: [{ store_id: "raw-documents", version: docVersion }],
+  tags: [`ingest-run:${ingestRunId}`],
 });
 ```
 
@@ -134,7 +135,7 @@ This enables deterministic replay: re-run categorization from stored corpus snap
 - Production: `create_file_backend({ base_path: config.corpus_dir })` (from `@f0rbit/corpus/file`)
 - Testing: `create_memory_backend()` -- fast, isolated, no filesystem
 
-Both go through `buildCorpus(backend)` which attaches all 5 stores via `.with_store()`.
+Both go through `buildCorpus(backend)` which attaches all 8 stores via `.with_store()`.
 
 ## Key Patterns
 
@@ -166,7 +167,6 @@ interface BankProvider {
   getAccounts(): Promise<Result<AccountInfo[], ProviderError>>;
   fetchTransactions(accountId: string, range: DateRange): Promise<Result<RawTransaction[], ProviderError>>;
   getAccountBalances(): Promise<Result<AccountBalance[], ProviderError>>;
-  enrichTransaction?(description: string): Promise<Result<EnrichmentData, ProviderError>>;
 }
 ```
 
@@ -174,11 +174,10 @@ Implementations:
 
 | Class | Module | Purpose |
 |-------|--------|---------|
-| `BasiqBankProvider` | `src/providers/basiq/provider.ts` | Production: Basiq CDR API via `BasiqClient` |
 | `CsvBankProvider` | `src/providers/csv/provider.ts` | Manual CSV import (DD/MM/YYYY format, sha256 IDs) |
 | `InMemoryBankProvider` | `src/providers/in-memory/provider.ts` | Testing: arrays + `failNextAuth`/`failNextFetch`/`failNextBalances` flags |
 
-Factory: `createProvider(config, options?) -> Result<BankProvider, ConfigError>` in `src/providers/index.ts` switches on `config.provider` (`"basiq"` | `"csv"` | `"manual"`).
+Factory: `createProvider(config, options?) -> Result<BankProvider, ConfigError>` in `src/providers/index.ts` switches on `config.provider` (`"csv"` | `"manual"`).
 
 `SuperProvider` is now implemented (M2 complete). Forward-compatible interface: `InvestmentProvider` (M3).
 
@@ -201,12 +200,30 @@ Implementations:
 | `ManualSuperProvider` | `src/providers/manual-super/provider.ts` | JSON file import (validates with Zod) |
 | `InMemorySuperProvider` | `src/providers/in-memory/super-provider.ts` | Testing: arrays + fail flags |
 
+### Document Parser
+
+`DocumentParser` interface in `src/providers/types.ts`:
+
+```ts
+interface DocumentParser {
+  readonly name: string;
+  parseDocument(content: string, mimeType: string, accountHint?: string): Promise<Result<ParsedDocument, ProviderError>>;
+}
+```
+
+Implementations:
+
+| Class | Module | Purpose |
+|-------|--------|---------|
+| `AnthropicDocumentParser` | `src/providers/ai/parser.ts` | Production: Claude API for PDF, image, CSV, text extraction |
+| `InMemoryDocumentParser` | `src/providers/in-memory/document-parser.ts` | Testing: canned responses + fail flags |
+
 ### Transaction Pipeline
 
 Orchestrated by `categorizePipeline()` in `src/pipeline/categorizer.ts`.
 
 ```
-PipelineContext = { mappings: MerchantMappings, rentConfig: RentConfig, enrichTransaction?: fn }
+PipelineContext = { mappings: MerchantMappings, rentConfig: RentConfig }
 ```
 
 Steps (sequential if-return, NOT pipe().flat_map()):
@@ -214,27 +231,30 @@ Steps (sequential if-return, NOT pipe().flat_map()):
 1. **Filter** (`filterTransaction`): Exclude credits and pattern-matched exclusions. Returns `Result<RawTransaction, ExcludedTransaction>`.
 2. **Rent** (`isRentTransaction` + `handleRent`): Short-circuit if landlord or debit rent pattern matches. `calculateRentAmount()` handles solo vs. shared logic based on `solo_start_date`.
 3. **Local mapping** (`matchTransaction` + `applyMapping`): Case-insensitive substring match against `merchant-mappings.jsonc` rules. `extractLocation` option extracts location suffix from description.
-4. **Inline enrichment** (`mapEnrichmentCategory` + `applyEnrichment`): Use enrichment data already on the transaction (from Basiq). Static `ENRICHMENT_CATEGORY_MAP` maps Basiq categories to local categories.
-5. **API enrichment**: Call `context.enrichTransaction(description)` if available. Non-fatal on failure.
-6. **Fallback** (`createFallback`): Category "Other", item = raw description.
+4. **Fallback** (`createFallback`): Category "Other", item = raw description.
 
 Batch function: `categorizeAll(transactions, context)` returns `{ categorized: CategorizedTransaction[], excluded: ExcludedTransaction[] }`.
 
-### Sync Orchestration
+### Ingest Orchestration
 
-`syncTransactions()` in `src/services/sync-service.ts` -- 10-step process:
+`ingestDocument()` in `src/services/ingest-service.ts` -- 14-step process:
 
 1. Create `sync_runs` row (cuid2 ID)
-2. Authenticate provider
-3. Discover accounts -> snapshot to `raw-accounts` corpus store -> upsert into SQLite
-4. Fetch transactions per account -> snapshot each to `raw-transactions` corpus store
-5. Fetch balances -> snapshot to `raw-balances` corpus store (non-fatal)
-5.5. Materialize balances to snapshots SQLite table (gated by `auto_snapshot`, non-fatal)
-6. Run categorization pipeline (`categorizeAll`)
-7. Snapshot sync results to `sync-results` corpus store (with `parents` linking to raw-transactions versions)
-8. Materialize categorized transactions into SQLite (skip in dry-run, dedup by external_id)
-9. Update `sync_runs` row with final counts
-10. Return `SyncSummary`
+2. Read document from filesystem (PDF, CSV, image, text)
+3. Compute content hash for dedup (skip if already ingested)
+4. Snapshot document to `raw-documents` corpus store (base64 for binary, raw text for CSV)
+5. Route to parser: CSV fast path (`--parser csv`) or AI parser
+6. AI parser: send document to Claude API for extraction (or CSV parser: structured parse)
+7. Snapshot parse results to `ai-parse-results` corpus store (with parent → raw-documents)
+8. Resolve account (from `--account` flag or AI-extracted account info) → upsert into SQLite
+9. Snapshot raw transactions to `raw-transactions` corpus store
+10. Run categorization pipeline (`categorizeAll`)
+11. Snapshot sync results to `sync-results` corpus store (with parent → ai-parse-results)
+12. Materialize categorized transactions into SQLite (skip in dry-run, dedup by external_id)
+13. Compute net worth → snapshot to `computation-snapshots` corpus store (with parent → sync-results)
+14. Update `sync_runs` row with final counts, return `IngestSummary`
+
+CSV fast path: when `--parser csv` is specified, step 5-6 bypass the AI parser entirely and use `CsvBankProvider`-style structured parsing. No `ANTHROPIC_API_KEY` required.
 
 ### Database
 
@@ -250,13 +270,14 @@ Batch function: `categorizeAll(transactions, context)` returns `{ categorized: C
 ### Configuration
 
 - `config.jsonc` -- user settings (gitignored), validated by `configSchema` (Zod)
-  - `db_path`, `corpus_dir`, `vault_path`, `budget_dir`, `provider`, `basiq?`, `sync`, `rent`
+  - `db_path`, `corpus_dir`, `vault_path`, `budget_dir`, `provider`, `anthropic?`, `sync`, `rent`
+  - `anthropic` config: `model` (default `claude-sonnet-4-20250514`), `max_tokens` (default 4096)
   - `rent` config: `solo_start_date`, `solo_weekly_amount`, `shared_roommate_contribution`, `landlord_patterns`, `debit_rent_patterns`
 - `config.example.jsonc` -- committed example
 - `merchant-mappings.jsonc` -- categorization rules (committed)
   - Contains `mappings: MerchantMapping[]` and `exclusions: ExclusionRule[]`
   - Loaded by `loadMappings()` in `src/pipeline/local-mappings.ts`
-- `BASIQ_API_KEY` -- environment variable, read by `getBasiqApiKey()`
+- `ANTHROPIC_API_KEY` -- environment variable, read by `getAnthropicApiKey()`
 - Rent config is in `config.jsonc`, NOT in merchant mappings
 
 ### Export
@@ -344,10 +365,11 @@ bun run db:migrate    # bunx drizzle-kit migrate
 ### Running the CLI
 
 ```sh
-bun run dev -- sync
+bun run dev -- ingest statement.pdf --account "Everyday Account"
+bun run dev -- ingest transactions.csv --parser csv
+bun run dev -- ingest bank-statement.pdf --dry-run --verbose
 bun run dev -- accounts
 bun run dev -- export
-bun run dev -- import
 bun run dev -- mappings
 bun run dev -- snapshot
 bun run dev -- networth
@@ -363,20 +385,23 @@ bun run dev -- super import data.json --account-name "My Super Fund"
 - Transaction amounts are always positive; `direction` field (`"debit"` | `"credit"`) disambiguates
 - `external_id` is the dedup key for transactions -- never insert without checking; `createTransaction()` throws a sentinel `{ __duplicate: true }` object caught by the `try_catch_async` error mapper to produce a `DUPLICATE` DbError
 - Rent has special logic in the pipeline -- do NOT categorize via merchant mappings; it is handled by `isRentTransaction()` before mappings are checked
-- Basiq JWT expires -- `BasiqClient.authenticate()` caches token and refreshes 60s before expiry
 - `config.jsonc` is gitignored (contains user ID) -- `config.example.jsonc` is committed
 - Corpus stores are async -- all `put`/`get` operations return Promises
-- Pipeline functions are PURE -- they read from corpus snapshots, never call providers directly (except optional `enrichTransaction` callback)
+- Pipeline functions are PURE -- they read from corpus snapshots, never call providers directly
 - SQLite materialization is the LAST step -- after corpus `sync-results` are stored
 - drizzle-kit CJS limitation: `src/db/schema.ts` inlines enum arrays with `satisfies` assertions to avoid cross-module `.js` extension import issues
 - Corpus `create_file_backend` uses `base_path` (not `base_dir`) as the config key
 - Pipeline categorizer does NOT use `pipe().flat_map()` for short-circuit -- uses sequential if-return pattern instead
 - Biome enforces `noNonNullAssertion` -- use type predicate filters instead of `!`
-- `BasiqClient.get()` uses a `Semaphore(10)` for rate limiting -- the `try/finally` in that method is the ONE place a try block is acceptable (for semaphore release)
 - CSV provider generates deterministic external IDs via sha256 hash of `date|description|amount|direction`, truncated to 16 hex chars
 - `InMemoryBankProvider` requires `authenticate()` before any other method -- returns `AUTH_FAILED` otherwise (matches real provider behavior)
 - `filterTransaction()` returns `Result<RawTransaction, ExcludedTransaction>` -- the err case is NOT an error, it is a categorized exclusion (credits, matched exclusion rules)
 - `AppDatabase` is a type alias for `ReturnType<typeof createDb>`, not a class -- do not `new` it
+- AI-generated external IDs use `ai-${sha256(date|description|amount|direction)}` prefix
+- Document dedup uses content hash -- re-ingesting same file detected before AI call
+- AI parsing is non-deterministic -- same document may produce slightly different results across runs
+- ANTHROPIC_API_KEY env var required for AI parsing, not needed for CSV fast path
+- Full document binary stored in corpus (base64 for PDFs/images, raw text for CSVs)
 
 ## M1: Snapshots + Net Worth
 
@@ -403,3 +428,13 @@ bun run dev -- super import data.json --account-name "My Super Fund"
 - `super` keyword is valid as a TS property name in object literals and interfaces
 - Services use `computeNetWorth()` which sums: savings + transaction - credit + super
 - 98 tests passing across 12 files after M2
+
+## Pivot: Basiq → AI Ingestion
+
+- Basiq integration removed entirely (no bank API dependency)
+- `budget ingest <file>` replaces both `budget sync` and `budget import`
+- AI parser (AnthropicDocumentParser) handles PDFs, images, CSVs, any text
+- CSV fast path (`--parser csv`) available for known CSV formats
+- Full ingestion pipeline: read → corpus store → AI parse → corpus → categorize → corpus → materialize → net worth → corpus
+- 8 corpus stores total, 4-store lineage chain per ingestion
+- Pipeline simplified: filter → rent → local-mappings → fallback (enrichment removed)
