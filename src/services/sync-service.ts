@@ -16,6 +16,7 @@ import { type PipelineContext, categorizeAll } from "../pipeline/categorizer.js"
 import { loadMappings } from "../pipeline/local-mappings.js";
 import type { BankProvider, DateRange, RawTransaction, SyncSummary } from "../providers/types.js";
 import { findAccountByExternalId, listAccounts, upsertAccount } from "./account-service.js";
+import { upsertSnapshot } from "./snapshot-service.js";
 import { createTransaction } from "./transaction-service.js";
 
 // === Types ===
@@ -152,6 +153,24 @@ export async function syncTransactions(
 		});
 	}
 
+	// Step 5.5: Materialize balances to snapshots table (non-fatal, gated by auto_snapshot)
+	let snapshotsMaterialized = 0;
+	if (config.sync.auto_snapshot && balancesResult.ok) {
+		for (const bal of balancesResult.value) {
+			const accountResult = await findAccountByExternalId(ctx.db, provider.name, bal.accountId);
+			if (!accountResult.ok || !accountResult.value) continue;
+
+			const snapshotResult = await upsertSnapshot(ctx.db, {
+				accountId: accountResult.value.id,
+				date: bal.asOf,
+				balance: bal.balance,
+				available: bal.available,
+				syncRunId,
+			});
+			if (snapshotResult.ok) snapshotsMaterialized++;
+		}
+	}
+
 	// Step 6: Run categorization pipeline
 	const mappingsResult = loadMappings();
 	if (!mappingsResult.ok) {
@@ -220,6 +239,7 @@ export async function syncTransactions(
 					transactionsCreated,
 					transactionsExcluded: excluded.length,
 					transactionsSkipped,
+					snapshotsCreated: snapshotsMaterialized,
 				})
 				.where(eq(syncRuns.id, syncRunId))
 				.run();
@@ -235,7 +255,7 @@ export async function syncTransactions(
 		transactionsCreated,
 		transactionsExcluded: excluded.length,
 		transactionsSkipped,
-		snapshotsCreated: rawSnapshotVersions.length + 1,
+		snapshotsCreated: rawSnapshotVersions.length + 1 + snapshotsMaterialized,
 		status: "success" as const,
 		duration: Date.now() - startTime,
 		errors: [],

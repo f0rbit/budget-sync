@@ -76,3 +76,13 @@ export function makeRentConfig() {
 		debit_rent_patterns: ["Internet Withdrawal.*Rent"],
 	};
 }
+
+export function makeBalance(overrides?: Partial<AccountBalance>): AccountBalance {
+	return {
+		accountId: overrides?.accountId ?? createId(),
+		balance: 1500.0,
+		available: 1400.0,
+		asOf: "2026-03-01",
+		...overrides,
+	};
+}
