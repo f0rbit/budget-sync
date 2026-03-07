@@ -7,7 +7,27 @@
 
 ## Executive Summary
 
-`budget-sync` is a personal finance CLI tool that unifies bank transactions, savings balances, superannuation, and stock investments into a single SQLite database. It tracks net worth over time via point-in-time snapshots. Bank data comes primarily through Basiq (CDR intermediary), with manual CSV/JSON import as fallback for providers without APIs. The DB is the source of truth; Obsidian markdown export is optional. Built with Bun, Drizzle ORM, Commander, and `@f0rbit/corpus` Result types.
+`budget-sync` is a personal finance CLI tool that unifies bank transactions, savings balances, superannuation, and stock investments into a single SQLite database. It tracks net worth over time via point-in-time snapshots. Bank data comes primarily through Basiq (CDR intermediary), with manual CSV/JSON import as fallback for providers without APIs. The DB is the source of truth; Obsidian markdown export is optional. Built with Bun, Drizzle ORM, Commander, and `@f0rbit/corpus` — used both for `Result<T,E>` error handling (`pipe()`, `try_catch`, `fetch_result()`) and as a versioned data store (corpus stores for raw API snapshots and sync results).
+
+### Architecture: Corpus-First Data Flow
+
+```
+Provider (Basiq/CSV/InMemory)
+    │
+    ├─→ corpus.stores["raw-transactions"].put(snapshot)  ── versioned, deduped
+    ├─→ corpus.stores["raw-accounts"].put(snapshot)      ── versioned, deduped
+    ├─→ corpus.stores["raw-balances"].put(snapshot)      ── versioned, deduped
+    │
+    ▼
+Pure pipeline functions (compose snapshots → categorized results)
+    │
+    ├─→ corpus.stores["sync-results"].put(result, { parents: [raw snapshots] })
+    │
+    ▼
+SQLite/Drizzle (materialize for querying)
+```
+
+Raw API data is snapshotted into corpus stores **before** any processing. The categorization pipeline operates on immutable snapshot data. Sync results are stored with lineage (`parents`) linking back to raw transaction snapshots. SQLite materialization happens **after** the sync-results snapshot is persisted.
 
 ---
 
@@ -38,12 +58,13 @@ It does this by:
 - Tracking **superannuation** balance and contributions (REST Super)
 - Tracking **investment holdings** (Betashares Direct — ETFs)
 - Computing **net worth** = savings + investments + super − credit card debt
+- **Corpus stores** snapshot all raw API data and sync results for versioning, lineage, and deterministic replay
 
 ### Milestones
 
 | Milestone | Scope | Status |
 |-----------|-------|--------|
-| **M0: Budget Sync + DB** | Schema, providers, pipeline, Basiq transactions, Obsidian export, merchant mappings, SKILL.md | **Plan detailed below** |
+| **M0: Budget Sync + DB** | Schema, corpus stores, providers, pipeline, Basiq transactions, Obsidian export, merchant mappings, SKILL.md | **Phases 0–0.5 COMPLETE; Phases 0.6–0.10 in progress** |
 | **M1: Savings Snapshots + Net Worth** | Balance snapshots on sync, `snapshot` command, `networth` command (bank-only) | Scoped |
 | **M2: Super Integration** | REST Super via Basiq or manual import, contributions tracking | Scoped |
 | **M3: Investment Tracking** | Betashares Direct holdings, ASX price lookup, investment transactions | Scoped |
@@ -53,13 +74,15 @@ It does this by:
 
 | Aspect | Previous | This Plan |
 |--------|----------|-----------|
-| Data store | Flat JSON state file | SQLite + Drizzle ORM |
-| Source of truth | Obsidian markdown notes | Database |
+| Data store | Flat JSON state file | SQLite + Drizzle ORM + Corpus stores |
+| Source of truth | Obsidian markdown notes | Database (corpus stores for raw data lineage) |
 | Obsidian | Primary output | Optional export |
 | Scope | Budget transactions only | Full personal finance |
 | Duplicate detection | State file + filesystem scan | DB-level (transaction source IDs) |
 | Accounts | Configured in JSONC | Discovered via provider, stored in DB |
 | Net worth | Not tracked | Core feature (M1+) |
+| Raw data archival | Not tracked | Corpus stores snapshot every API response |
+| Error handling | Basic try/catch | `pipe()` chains, `fetch_result()`, `try_catch_async()` |
 
 ---
 
@@ -74,6 +97,11 @@ accounts ──┬── transactions (budget spending)
             └── contributions (super contributions, M2)
 
 sync_runs ──── sync_run_results (per-account sync outcomes)
+
+corpus stores:
+  raw-transactions ──→ sync-results (parents linkage)
+  raw-accounts
+  raw-balances
 ```
 
 ### Schema Definition
@@ -372,7 +400,7 @@ Auth flow:
 
 Pagination: Basiq uses cursor-based pagination via `links.next` in response body.
 
-Rate limits: 10 requests/second (production). Implement retry with backoff.
+Rate limits: 10 requests/second (production). Use `Semaphore` from corpus for rate limiting.
 
 ---
 
@@ -385,11 +413,12 @@ Built with Commander. Entry point: `src/index.ts`. Binary name: `budget-sync`.
 ```
 budget-sync sync [options]
   Fetch transactions from provider, categorize, and store in DB.
+  Creates corpus snapshots of raw data and sync results.
 
   Options:
     --from <date>        Start date (YYYY-MM-DD). Default: last sync date or 30 days ago
     --to <date>          End date (YYYY-MM-DD). Default: today
-    --dry-run            Preview without writing to DB
+    --dry-run            Preview without writing to DB (still creates corpus snapshots)
     --provider <name>    Override provider (default: from config)
     --account <id>       Sync specific account only
     --verbose            Show detailed output
@@ -459,6 +488,9 @@ budget-sync networth [options]
   // Where the SQLite database lives
   "db_path": "./data/budget-sync.db",
 
+  // Where corpus stores live (versioned snapshots)
+  "corpus_dir": "./data/corpus",
+
   // Obsidian vault (for export command only)
   "vault_path": "/Users/tom/Documents/Vaults/Personal",
   "budget_dir": "Budget",
@@ -495,6 +527,7 @@ budget-sync networth [options]
 ```typescript
 const configSchema = z.object({
   db_path: z.string().default("./data/budget-sync.db"),
+  corpus_dir: z.string().default("./data/corpus"),
   vault_path: z.string(),
   budget_dir: z.string().default("Budget"),
   provider: z.enum(["basiq", "csv", "manual"]).default("basiq"),
@@ -649,52 +682,83 @@ The `SKILL.md` at the repo root provides AI agents with project context. Content
 # budget-sync — AI Agent Skill
 
 ## Project Overview
-Personal finance CLI tool. SQLite (Drizzle ORM) is the source of truth.
+Personal finance CLI tool. SQLite (Drizzle ORM) is the source of truth for queries.
+Corpus stores are the source of truth for raw API data and sync results (versioned, with lineage).
 Tracks: bank transactions, savings balances, super, investments, net worth.
 
 ## Tech Stack
 - Runtime: Bun
 - Database: SQLite + Drizzle ORM (drizzle-orm/bun-sqlite)
+- Data stores: @f0rbit/corpus stores (raw-transactions, raw-accounts, raw-balances, sync-results)
 - Error handling: @f0rbit/corpus Result<T, E> types — never throw
+  - pipe() for chaining, flat_map() for fallible steps
+  - fetch_result() for HTTP calls (never raw fetch)
+  - try_catch / try_catch_async for wrapping side effects
+  - Semaphore for rate limiting
+  - parallel_map() for concurrent operations
 - CLI: Commander
 - Config: JSONC + JSON Schema
-- Testing: bun test, in-memory SQLite, in-memory providers
+- Testing: bun test, in-memory SQLite, in-memory corpus, in-memory providers
 
 ## Project Structure
 [directory tree with purpose annotations]
+
+## Corpus Store Architecture
+
+### Data Flow
+Provider → corpus raw stores → pipeline (pure) → corpus sync-results → SQLite
+
+### Stores
+- `raw-transactions` — raw transaction arrays per account, per fetch
+- `raw-accounts` — raw account info per fetch
+- `raw-balances` — raw balance snapshots per fetch
+- `sync-results` — categorized pipeline output, with `parents` linking to raw-transactions
+
+### Lineage
+sync-results snapshots reference their source raw-transactions via `parents` array.
+This enables deterministic replay: re-run categorization from stored corpus snapshots.
+
+### Backends
+- Production: `create_file_backend({ base_path: config.corpus_dir })`
+- Testing: `create_memory_backend()` — fast, isolated, no filesystem
 
 ## Key Patterns
 
 ### Error Handling
 - All fallible functions return Result<T, E>
-- Never throw, never try/catch
+- Never throw, never try/catch (use corpus wrappers)
 - Use pipe() for chaining fallible operations
+- Use pipe().flat_map() for composing pipeline steps
 - Error types defined in src/errors.ts
+- HTTP errors: use fetch_result() + errors.fromFetchError as mapper
 
 ### Provider Pattern
 - BankProvider interface in src/providers/types.ts
-- Production: BasiqBankProvider (HTTP)
+- Production: BasiqBankProvider (HTTP via fetch_result())
 - Testing: InMemoryBankProvider (arrays)
-- Manual: CsvBankProvider (file import)
+- Manual: CsvBankProvider (file import via pipe() + try_catch)
 - Providers return raw data — categorization happens in pipeline/
 
 ### Transaction Pipeline
 1. Fetch raw transactions from provider
-2. Filter exclusions (src/pipeline/filter.ts)
-3. Handle rent specially (src/pipeline/rent.ts)
-4. Match merchant mappings (src/pipeline/local-mappings.ts)
-5. Enrich fallback via provider (src/pipeline/enrich-mapper.ts)
-6. Fallback: category "Other"
-7. Store in DB
+2. Snapshot raw data into corpus stores (raw-transactions, raw-accounts, raw-balances)
+3. Filter exclusions (src/pipeline/filter.ts) — pure function, pipe() chain
+4. Handle rent specially (src/pipeline/rent.ts) — pure function
+5. Match merchant mappings (src/pipeline/local-mappings.ts) — pure function
+6. Enrich fallback via provider (src/pipeline/enrich-mapper.ts)
+7. Fallback: category "Other"
+8. Snapshot sync results into corpus (sync-results, with parents)
+9. Materialize into SQLite
 
 ### Database
 - Schema: src/db/schema.ts
-- Client: src/db/client.ts
+- Client: src/db/client.ts (exports AppContext { db, corpus })
 - Migrations: drizzle/ (generated, never hand-edited)
 - Test helper: createTestDb() returns in-memory SQLite
+- Test helper: createTestCorpus() returns in-memory corpus
 
 ### Configuration
-- config.jsonc — user settings (gitignored)
+- config.jsonc — user settings (gitignored), includes corpus_dir
 - merchant-mappings.jsonc — categorization rules (committed)
 - Rent config is in config.jsonc, not merchant mappings
 
@@ -714,7 +778,14 @@ Tracks: bank transactions, savings balances, super, investments, net worth.
 
 ### Adding a new CLI command
 1. Create handler in src/commands/<name>.ts
-2. Register in src/index.ts
+2. Construct AppContext { db, corpus } from config
+3. Register in src/index.ts
+
+### Adding a new corpus store
+1. Define Zod schema in src/corpus/schemas.ts
+2. Define store in src/corpus/stores.ts using define_store()
+3. Register in buildCorpus() in src/corpus/client.ts
+4. Export from src/corpus/index.ts
 
 ### Running migrations
 bunx drizzle-kit generate && bunx drizzle-kit migrate
@@ -726,6 +797,9 @@ bunx drizzle-kit generate && bunx drizzle-kit migrate
 - Rent has special logic — don't categorize via merchant mappings
 - Basiq JWT expires — client must handle token refresh
 - Config file is gitignored (contains user ID) — config.example.jsonc is committed
+- Corpus stores are async — all put/get operations return Promises
+- Pipeline functions are PURE — they read from corpus snapshots, never call providers
+- SQLite materialization is the LAST step — after corpus sync-results are stored
 ```
 
 ---
@@ -748,20 +822,31 @@ budget-sync/
 ├── merchant-mappings.jsonc             # Categorization rules
 ├── merchant-mappings.schema.json       # JSON Schema for mappings
 ├── SKILL.md                            # AI agent instructions
-├── data/                               # SQLite DB location (gitignored)
+├── data/                               # SQLite DB + corpus stores (gitignored)
+│   ├── budget-sync.db
+│   └── corpus/
+│       ├── raw-transactions/
+│       ├── raw-accounts/
+│       ├── raw-balances/
+│       └── sync-results/
 ├── drizzle/                            # Generated migrations
 ├── src/
 │   ├── index.ts                        # Commander CLI entry
 │   ├── config.ts                       # Config loading + validation
 │   ├── errors.ts                       # Error type definitions
+│   ├── corpus/
+│   │   ├── index.ts                   # Re-exports
+│   │   ├── schemas.ts                 # Zod schemas for corpus snapshot data
+│   │   ├── stores.ts                  # Store definitions (define_store)
+│   │   └── client.ts                  # createCorpus() + createTestCorpus()
 │   ├── db/
 │   │   ├── schema.ts                   # Drizzle schema (all tables)
-│   │   └── client.ts                   # DB connection factory
+│   │   └── client.ts                   # DB connection factory + AppContext
 │   ├── providers/
 │   │   ├── types.ts                    # BankProvider interface + data types
 │   │   ├── index.ts                    # Provider factory
 │   │   ├── basiq/
-│   │   │   ├── client.ts              # HTTP client + JWT auth
+│   │   │   ├── client.ts              # HTTP client + JWT auth (fetch_result)
 │   │   │   ├── provider.ts            # BankProvider implementation
 │   │   │   └── types.ts               # Basiq API response types
 │   │   ├── csv/
@@ -769,16 +854,16 @@ budget-sync/
 │   │   └── in-memory/
 │   │       └── provider.ts            # Test BankProvider
 │   ├── pipeline/
-│   │   ├── categorizer.ts             # Pipeline orchestrator
-│   │   ├── filter.ts                  # Exclusion rules
-│   │   ├── rent.ts                    # Rent special handling
+│   │   ├── categorizer.ts             # Pipeline orchestrator (pipe().flat_map() chain)
+│   │   ├── filter.ts                  # Exclusion rules (pure function)
+│   │   ├── rent.ts                    # Rent special handling (pure function)
 │   │   ├── local-mappings.ts          # JSONC mapping loader + matcher
 │   │   └── enrich-mapper.ts           # Basiq category → local category
 │   ├── services/
-│   │   ├── sync-service.ts            # Main sync workflow
-│   │   ├── transaction-service.ts     # Transaction CRUD
-│   │   ├── account-service.ts         # Account CRUD
-│   │   └── export-service.ts          # Obsidian markdown export
+│   │   ├── sync-service.ts            # Main sync workflow (corpus → pipeline → materialize)
+│   │   ├── transaction-service.ts     # Transaction CRUD (pipe + try_catch_async)
+│   │   ├── account-service.ts         # Account CRUD (pipe + try_catch_async)
+│   │   └── export-service.ts          # Obsidian markdown export (pipe + try_catch)
 │   └── commands/
 │       ├── sync.ts                    # sync command handler
 │       ├── accounts.ts                # accounts command handler
@@ -786,355 +871,448 @@ budget-sync/
 │       ├── export.ts                  # export command handler
 │       └── import.ts                  # import command handler
 └── __tests__/
-    ├── helpers.ts                     # createTestDb, factory functions
+    ├── helpers.ts                     # createTestContext(), factory functions
     ├── integration/
-    │   ├── sync-workflow.test.ts       # End-to-end sync scenarios
+    │   ├── sync-workflow.test.ts       # End-to-end sync + corpus snapshot scenarios
     │   ├── categorization.test.ts     # Full pipeline tests
+    │   ├── corpus-lineage.test.ts     # Lineage + deterministic replay tests
     │   └── export.test.ts             # Obsidian export tests
     └── unit/
         ├── filter.test.ts             # Exclusion rule tests
         ├── rent.test.ts               # Rent calculation tests
         ├── local-mappings.test.ts     # Mapping match tests
+        ├── pipeline-steps.test.ts     # pipe() assertion tests per step
         └── filename.test.ts           # Note filename generation
 ```
 
-### Phase 0: Scaffold (sequential)
+---
+
+### Phase 0: Scaffold (sequential) — COMPLETE
 
 All tasks sequential — each depends on the previous.
 
-**Task 0.1: Project scaffold**
+**Task 0.1: Project scaffold** ✅ COMPLETE
 - Files: `package.json`, `tsconfig.json`, `biome.json`, `drizzle.config.ts`, `.gitignore`, `.env.example`
 - Dependencies: `@f0rbit/corpus`, `zod`, `commander`, `jsonc-parser`, `drizzle-orm`, `@paralleldrive/cuid2`
 - Dev dependencies: `drizzle-kit`, `@types/bun`
 - LOC: ~100
 - Touches: root config files
 
-**Task 0.2: Error types + provider interface + shared types**
+**Task 0.2: Error types + provider interface + shared types** ✅ COMPLETE
 - Files: `src/errors.ts`, `src/providers/types.ts`
 - All error types, all provider interfaces, `RawTransaction`, `AccountInfo`, `AccountBalance`, etc.
-- Zod schemas for `Category` enum, `DateRange`, etc.
-- LOC: ~200
+- Includes `errors.fromFetchError()` for mapping corpus `FetchError` to `ProviderError`
+- LOC: ~340
 - Touches: `src/errors.ts`, `src/providers/types.ts`
 
-**Task 0.3: Drizzle schema + DB client**
+**Task 0.3: Drizzle schema + DB client** ✅ COMPLETE
 - Files: `src/db/schema.ts`, `src/db/client.ts`
-- All tables from Section 2 (accounts, transactions, snapshots, holdings, contributions, sync_runs)
+- All tables (accounts, transactions, snapshots, holdings, contributions, sync_runs)
 - `createDb(path)` and `createTestDb()` factory functions
-- Run `bunx drizzle-kit generate` to create initial migration
-- LOC: ~250
+- `AppContext { db, corpus }` interface
+- LOC: ~220
 - Touches: `src/db/schema.ts`, `src/db/client.ts`, `drizzle/`
-- Depends on: Task 0.2 (imports error types)
 
-**Task 0.4: Config loader**
+**Task 0.4: Config loader** ✅ COMPLETE
 - Files: `src/config.ts`, `config.example.jsonc`, `config.schema.json`
 - Load `config.jsonc` via `jsonc-parser`, validate with Zod
-- Resolve `BASIQ_API_KEY` from env
-- LOC: ~120
+- Includes `corpus_dir` field
+- LOC: ~82
 - Touches: `src/config.ts`, `config.example.jsonc`, `config.schema.json`
-- Depends on: Task 0.2
 
-> **Phase 0 total: ~670 LOC**
-> Verification: typecheck, generate migration, commit
+> **Phase 0 total: ~740 LOC** ✅ COMPLETE
 
 ---
 
-### Phase 1: Core Pipeline + In-Memory Provider (parallel where marked)
+### Phase 0.5: Corpus Store Integration (sequential) — COMPLETE
 
-**Task 1.1: Exclusion filter** *(parallel-safe)*
+**Task 0.5.1: Corpus Zod schemas** ✅ COMPLETE
+- Files: `src/corpus/schemas.ts`
+- Zod schemas for `RawTransactionsSnapshot`, `RawAccountsSnapshot`, `RawBalancesSnapshot`, `SyncResultSnapshot`
+- Re-uses enums from `src/providers/types.ts`
+- LOC: ~111
+- Touches: `src/corpus/schemas.ts`
+
+**Task 0.5.2: Corpus store definitions** ✅ COMPLETE
+- Files: `src/corpus/stores.ts`
+- 4 stores: `raw-transactions`, `raw-accounts`, `raw-balances`, `sync-results`
+- Uses `define_store()` with `json_codec()` and Zod schemas
+- LOC: ~37
+- Touches: `src/corpus/stores.ts`
+
+**Task 0.5.3: Corpus client + re-exports** ✅ COMPLETE
+- Files: `src/corpus/client.ts`, `src/corpus/index.ts`
+- `createCorpus(dataDir)` — file backend for production
+- `createTestCorpus()` — memory backend for tests
+- `AppCorpus` type exported
+- LOC: ~33
+- Touches: `src/corpus/client.ts`, `src/corpus/index.ts`
+
+> **Phase 0.5 total: ~181 LOC** ✅ COMPLETE
+
+---
+
+### Phase 0.6: Pipeline + In-Memory Provider (parallel where marked)
+
+> **Replaces original Phase 1.** Same pipeline steps but now composed with `pipe().flat_map()` chains. Each step is a pure function: `(RawTransaction, context) → Result<CategorizedTransaction | ExcludedTransaction, PipelineError>`.
+
+**Task 0.6.1: Exclusion filter** *(parallel-safe)*
 - Files: `src/pipeline/filter.ts`
 - Load exclusion patterns from `merchant-mappings.jsonc`
 - `filterTransaction(tx, exclusions)` → `Result<RawTransaction, ExcludedTransaction>`
 - Exclusion rules: credit direction, cc payments, savings, investments, roommate, reimbursements
-- LOC: ~100
+- Pure function — takes `RawTransaction` and `ExclusionRule[]`, returns `Result`
+- LOC: ~110
 - Touches: `src/pipeline/filter.ts`
 
-**Task 1.2: Rent handler** *(parallel-safe)*
+**Task 0.6.2: Rent handler** *(parallel-safe)*
 - Files: `src/pipeline/rent.ts`
 - `isRentTransaction(tx, config)` — pattern match against landlord + debit rent patterns
-- `handleRent(tx, config)` — date-aware amount calculation (pre/post solo_start_date)
+- `handleRent(tx, config)` → `Result<CategorizedTransaction, PipelineError>` — date-aware amount calculation (pre/post solo_start_date)
 - Returns a `CategorizedTransaction` with category "Rent"
-- LOC: ~90
+- Pure function over `RawTransaction` + `RentConfig`
+- LOC: ~100
 - Touches: `src/pipeline/rent.ts`
 
-**Task 1.3: Local mapping loader + matcher** *(parallel-safe)*
+**Task 0.6.3: Local mapping loader + matcher** *(parallel-safe)*
 - Files: `src/pipeline/local-mappings.ts`
-- `loadMappings(path)` → `Result<MerchantMapping[], PipelineError>`
+- `loadMappings(path)` → `Result<MerchantMappings, PipelineError>` using `pipe()` + `try_catch` for file read + JSONC parse
 - `matchTransaction(description, mappings)` → `MerchantMapping | null`
 - Case-insensitive substring match, first match wins
 - Handle `extractLocation` flag
-- LOC: ~100
+- LOC: ~110
 - Touches: `src/pipeline/local-mappings.ts`
 
-**Task 1.4: Enrich category mapper** *(parallel-safe)*
+**Task 0.6.4: Enrich category mapper** *(parallel-safe)*
 - Files: `src/pipeline/enrich-mapper.ts`
 - Static mapping table: Basiq category names → local categories
 - `mapEnrichment(enrichment)` → `{ item, category, notes }`
+- Pure function, no I/O
 - LOC: ~70
 - Touches: `src/pipeline/enrich-mapper.ts`
 
-**Task 1.5: In-memory provider** *(parallel-safe)*
+**Task 0.6.5: In-memory provider** *(parallel-safe)*
 - Files: `src/providers/in-memory/provider.ts`
 - `InMemoryBankProvider` implementing `BankProvider`
 - Pre-loadable arrays for accounts, transactions, balances
 - `addTransactions()`, `addAccounts()`, `setBalances()` helpers
 - Error simulation: `failNextAuth`, `failNextFetch` flags
-- LOC: ~100
+- All methods return `Result` — uses `ok()` / `err()`
+- LOC: ~110
 - Touches: `src/providers/in-memory/provider.ts`
 
-**Task 1.6: Categorizer orchestrator** *(depends on 1.1–1.4)*
+**Task 0.6.6: Categorizer orchestrator** *(depends on 0.6.1–0.6.4)*
 - Files: `src/pipeline/categorizer.ts`
-- `categorizePipeline(tx, mappings, rentConfig, provider?)` → `Result<CategorizedTransaction, PipelineError>`
+- `categorizePipeline(tx, context)` → `Result<CategorizedTransaction, PipelineError>`
 - Composes: filter → rent → local mapping → enrich → fallback
-- LOC: ~100
+- Uses `pipe().flat_map().flat_map()...` chain to compose all steps
+- `context` includes: `MerchantMappings`, `RentConfig`, optional enrichment function
+- Each step is a `flat_map` — if any step produces a final `CategorizedTransaction`, short-circuit
+- LOC: ~120
 - Touches: `src/pipeline/categorizer.ts`
 
-> Tasks 1.1–1.5 can run in **parallel** (no shared files).
-> Task 1.6 runs **after** 1.1–1.4.
-> **Phase 1 total: ~560 LOC**
-> Verification: typecheck, commit
+> Tasks 0.6.1–0.6.5 can run in **parallel** (no shared files).
+> Task 0.6.6 runs **after** 0.6.1–0.6.4.
+> **Phase 0.6 total: ~620 LOC**
+> Verification: typecheck, COMMIT
 
 ---
 
-### Phase 2: Services (parallel where marked)
+### Phase 0.7: Services with Corpus Integration (parallel where marked)
 
-**Task 2.1: Transaction service** *(parallel-safe)*
+> **Replaces original Phase 2.** Services now receive `AppContext { db, corpus }`. The sync service snapshots raw data into corpus stores before categorization, and stores sync results with lineage. DB operations use `pipe()` + `try_catch_async`.
+
+**Task 0.7.1: Transaction service** *(parallel-safe)*
 - Files: `src/services/transaction-service.ts`
-- `createTransaction(db, data)` — insert with external_id dedup check
-- `getTransactions(db, filters)` — query with date range, category, account filters
-- `getUncategorized(db)` — transactions with category "Other"
-- LOC: ~120
+- `createTransaction(ctx, data)` — insert with external_id dedup check
+- `getTransactions(ctx, filters)` — query with date range, category, account filters
+- `getUncategorized(ctx)` — transactions with category "Other"
+- All DB operations wrapped in `try_catch_async()` returning `Result<T, DbError>`
+- Uses `pipe()` for composing query → transform → return
+- Receives `AppContext` (uses `ctx.db`)
+- LOC: ~140
 - Touches: `src/services/transaction-service.ts`
 
-**Task 2.2: Account service** *(parallel-safe)*
+**Task 0.7.2: Account service** *(parallel-safe)*
 - Files: `src/services/account-service.ts`
-- `upsertAccount(db, accountInfo)` — create or update from provider data
-- `listAccounts(db)` — list active accounts
-- `deactivateAccount(db, id)` — soft-delete
-- LOC: ~90
+- `upsertAccount(ctx, accountInfo)` — create or update from provider data
+- `listAccounts(ctx)` — list active accounts
+- `deactivateAccount(ctx, id)` — soft-delete
+- All operations return `Result<T, DbError>` via `try_catch_async`
+- Uses `pipe()` for composing lookup → upsert → return
+- Receives `AppContext` (uses `ctx.db`)
+- LOC: ~110
 - Touches: `src/services/account-service.ts`
 
-**Task 2.3: Export service** *(parallel-safe)*
+**Task 0.7.3: Export service** *(parallel-safe)*
 - Files: `src/services/export-service.ts`
-- `exportToObsidian(db, vaultPath, budgetDir, options)` — query transactions, write markdown notes
+- `exportToObsidian(ctx, vaultPath, budgetDir, options)` — query transactions, write markdown notes
 - Markdown format matches existing `Budget/AGENTS.md` spec (YAML frontmatter)
 - Filename generation: `YYYY-MM-DD-slug.md` with `-2`, `-3` suffixes
+- Uses `pipe()` + `try_catch` for file write operations
 - Dry-run mode
-- LOC: ~150
+- Receives `AppContext` (uses `ctx.db`)
+- LOC: ~160
 - Touches: `src/services/export-service.ts`
 
-**Task 2.4: Sync service** *(depends on 2.1, 2.2)*
+**Task 0.7.4: Sync service** *(depends on 0.7.1, 0.7.2, and Phase 0.6)*
 - Files: `src/services/sync-service.ts`
-- `syncTransactions(db, provider, config, options)` — the main workflow:
+- `syncTransactions(ctx, provider, config, options)` — the main workflow:
   1. Create sync_run record
   2. Authenticate provider
-  3. Discover/upsert accounts
+  3. Discover/upsert accounts → snapshot to `corpus.stores["raw-accounts"]`
   4. For each account: fetch transactions in date range
-  5. Run each through categorization pipeline
-  6. Insert non-duplicate transactions into DB
-  7. Update sync_run with counts
-  8. Return summary
-- LOC: ~200
+  5. **Snapshot raw transactions** to `corpus.stores["raw-transactions"]` per account
+  6. **Snapshot raw balances** to `corpus.stores["raw-balances"]`
+  7. Run each transaction through categorization pipeline (reads from snapshot, pure)
+  8. **Snapshot sync results** to `corpus.stores["sync-results"]` with `{ parents: [raw tx snapshot IDs] }`
+  9. **Materialize** categorized transactions into SQLite (insert non-duplicates)
+  10. Update sync_run with counts
+  11. Return summary
+- All corpus `put()` calls are awaited before proceeding to next step
+- LOC: ~250
 - Touches: `src/services/sync-service.ts`
 
-> Tasks 2.1–2.3 can run in **parallel**.
-> Task 2.4 runs **after** 2.1 + 2.2.
-> **Phase 2 total: ~560 LOC**
-> Verification: typecheck, commit
+> Tasks 0.7.1–0.7.3 can run in **parallel**.
+> Task 0.7.4 runs **after** 0.7.1 + 0.7.2 + Phase 0.6.
+> **Phase 0.7 total: ~660 LOC**
+> Verification: typecheck, COMMIT
 
 ---
 
-### Phase 3: Basiq Provider + CSV Provider (parallel)
+### Phase 0.8: Providers with Corpus Utilities (parallel where marked)
 
-**Task 3.1: Basiq HTTP client** *(parallel-safe)*
+> **Replaces original Phase 3.** Basiq HTTP client uses `fetch_result()` from corpus for all HTTP calls (never raw `fetch`). `Semaphore` for rate limiting. `parallel_map()` for concurrent account fetching. CSV provider uses `pipe()` + `try_catch`.
+
+**Task 0.8.1: Basiq HTTP client** *(parallel-safe)*
 - Files: `src/providers/basiq/client.ts`, `src/providers/basiq/types.ts`
-- JWT auth with token caching and refresh
-- Paginated fetch helper
-- Rate limit retry (exponential backoff, max 3 retries)
-- Basiq API response Zod schemas
-- LOC: ~200
+- JWT auth with token caching and refresh — composed via `pipe()` chain:
+  - `pipe(getToken).flat_map(validateExpiry).flat_map(refreshIfNeeded)`
+- **All HTTP calls use `fetch_result()`** from corpus — never raw `fetch`
+- **`errors.fromFetchError`** is the error mapper for all `fetch_result()` calls
+- Paginated fetch helper using `pipe()` to compose page-fetching loop
+- **`Semaphore`** from corpus for rate limiting (10 req/sec production)
+- Basiq API response Zod schemas for type-safe parsing
+- LOC: ~240
 - Touches: `src/providers/basiq/client.ts`, `src/providers/basiq/types.ts`
 
-**Task 3.2: Basiq BankProvider** *(depends on 3.1)*
+**Task 0.8.2: Basiq BankProvider** *(depends on 0.8.1)*
 - Files: `src/providers/basiq/provider.ts`
 - Maps Basiq responses to `RawTransaction`, `AccountInfo`, `AccountBalance`
 - Implements `getAccounts()`, `fetchTransactions()`, `getAccountBalances()`, `enrichTransaction()`
-- LOC: ~150
+- Uses **`parallel_map()`** from corpus for fetching transactions across multiple accounts concurrently
+- Each method returns `Result<T, ProviderError>`
+- LOC: ~170
 - Touches: `src/providers/basiq/provider.ts`
 
-**Task 3.3: CSV BankProvider** *(parallel-safe, parallel with 3.1)*
+**Task 0.8.3: CSV BankProvider** *(parallel-safe, parallel with 0.8.1)*
 - Files: `src/providers/csv/provider.ts`
 - Reads BankSA CSV format (Date, Description, Debit, Credit, Balance)
+- Uses **`pipe()` + `try_catch`** for file reading and parsing
 - Generates stable external_ids from hash of (date, description, amount)
-- LOC: ~120
+- All methods return `Result<T, ProviderError>`
+- LOC: ~130
 - Touches: `src/providers/csv/provider.ts`
 
-**Task 3.4: Provider factory** *(depends on 3.2, 3.3)*
+**Task 0.8.4: Provider factory** *(depends on 0.8.2, 0.8.3)*
 - Files: `src/providers/index.ts`
 - `createProvider(config)` → `BankProvider` based on config.provider
 - LOC: ~40
 - Touches: `src/providers/index.ts`
 
-> Tasks 3.1 + 3.3 can run in **parallel**.
-> Task 3.2 after 3.1. Task 3.4 after 3.2 + 3.3.
-> **Phase 3 total: ~510 LOC**
-> Verification: typecheck, commit
+> Tasks 0.8.1 + 0.8.3 can run in **parallel**.
+> Task 0.8.2 after 0.8.1. Task 0.8.4 after 0.8.2 + 0.8.3.
+> **Phase 0.8 total: ~580 LOC**
+> Verification: typecheck, COMMIT
 
 ---
 
-### Phase 4: CLI Commands (parallel where marked)
+### Phase 0.9: CLI Commands with AppContext (parallel where marked)
 
-**Task 4.1: CLI entry point + sync command**
+> **Replaces original Phase 4.** Commands construct `AppContext { db, corpus }` from config and pass to services. Commands use `pipe()` for composing config loading → service calls → output formatting.
+
+**Task 0.9.1: CLI entry point + sync command**
 - Files: `src/index.ts`, `src/commands/sync.ts`
 - Commander program definition
-- `sync` command: parse args, load config, create provider, call sync service, print summary
+- `sync` command:
+  - Uses `pipe()` to compose: load config → create DB + corpus → create provider → sync → format output
+  - Constructs `AppContext { db: createDb(config.db_path), corpus: createCorpus(config.corpus_dir) }`
+  - Passes `AppContext` to sync service
 - Flags: `--from`, `--to`, `--dry-run`, `--provider`, `--account`, `--verbose`
-- LOC: ~150
+- LOC: ~160
 - Touches: `src/index.ts`, `src/commands/sync.ts`
 
-**Task 4.2: accounts command** *(parallel-safe)*
+**Task 0.9.2: accounts command** *(parallel-safe)*
 - Files: `src/commands/accounts.ts`
 - `accounts list` — table output of all accounts
-- `accounts discover` — call provider, upsert new accounts
+- `accounts discover` — call provider, upsert new accounts (snapshots to corpus)
 - `accounts deactivate <id>` — mark inactive
-- LOC: ~100
+- Uses `pipe()` for config → AppContext → service call → output
+- LOC: ~110
 - Touches: `src/commands/accounts.ts`
 
-**Task 4.3: mappings command** *(parallel-safe)*
+**Task 0.9.3: mappings command** *(parallel-safe)*
 - Files: `src/commands/mappings.ts`
 - `mappings list` — table output of all mappings
 - `mappings search <query>` — filter by match string
 - `mappings unmapped` — query DB for "Other" category transactions
-- LOC: ~80
+- Uses `pipe()` for config → AppContext → service call → output
+- LOC: ~90
 - Touches: `src/commands/mappings.ts`
 
-**Task 4.4: export + import commands** *(parallel-safe)*
+**Task 0.9.4: export + import commands** *(parallel-safe)*
 - Files: `src/commands/export.ts`, `src/commands/import.ts`
-- `export` — call export service
-- `import <file>` — load CSV, create provider, call sync service
-- LOC: ~120
+- `export` — call export service with `AppContext`
+- `import <file>` — load CSV, create provider, call sync service with `AppContext`
+- Uses `pipe()` for composing: load config → create context → service → output
+- LOC: ~130
 - Touches: `src/commands/export.ts`, `src/commands/import.ts`
 
-> Run 4.2–4.4 in parallel first (they export registration functions).
-> Then 4.1 last (creates index.ts, imports and wires all commands).
-> **Phase 4 total: ~450 LOC**
-> Verification: typecheck, commit
+> Run 0.9.2–0.9.4 in parallel first (they export registration functions).
+> Then 0.9.1 last (creates index.ts, imports and wires all commands).
+> **Phase 0.9 total: ~490 LOC**
+> Verification: typecheck, COMMIT
 
 ---
 
-### Phase 5: Merchant Mappings + SKILL.md + Tests (parallel)
+### Phase 0.10: Tests + Mappings + SKILL.md (parallel)
 
-**Task 5.1: Seed merchant-mappings.jsonc + schemas** *(parallel-safe)*
+> **Replaces original Phase 5.** Test helpers provide `createTestContext()` returning `AppContext` with in-memory DB + in-memory corpus. Integration tests verify corpus snapshots, lineage, and deterministic replay alongside DB records.
+
+**Task 0.10.1: Seed merchant-mappings.jsonc + schemas** *(parallel-safe)*
 - Files: `merchant-mappings.jsonc`, `merchant-mappings.schema.json`, `config.schema.json`
 - Port all mappings from Budget/AGENTS.md (30+ rules)
 - JSON Schema with category enum, field descriptions
-- Config JSON Schema
+- Config JSON Schema (includes `corpus_dir` field)
 - LOC: ~250 (JSONC + schema)
 - Touches: `merchant-mappings.jsonc`, `merchant-mappings.schema.json`, `config.schema.json`
 
-**Task 5.2: SKILL.md** *(parallel-safe)*
+**Task 0.10.2: SKILL.md** *(parallel-safe)*
 - Files: `SKILL.md`
 - Full AI agent skill file per Section 6 outline
-- LOC: ~200
+- Includes corpus store architecture, data flow, lineage patterns
+- Documents `pipe()`, `fetch_result()`, `try_catch_async`, `Semaphore`, `parallel_map()` usage
+- LOC: ~250
 - Touches: `SKILL.md`
 
-**Task 5.3: Test helpers + fixtures** *(parallel-safe)*
+**Task 0.10.3: Test helpers + fixtures** *(parallel-safe)*
 - Files: `__tests__/helpers.ts`
-- `createTestDb()` — in-memory SQLite with migrations
-- `createTestProvider()` — pre-loaded InMemoryBankProvider
+- `createTestContext()` → `AppContext` with in-memory SQLite + in-memory corpus:
+  ```typescript
+  export function createTestContext(): AppContext {
+    return { db: createTestDb(), corpus: createTestCorpus() };
+  }
+  ```
+- `createTestProvider()` — pre-loaded `InMemoryBankProvider`
 - Factory functions: `makeTransaction()`, `makeAccount()`, `makeConfig()`
 - Realistic test data matching AGENTS.md descriptions
-- LOC: ~150
+- LOC: ~170
 - Touches: `__tests__/helpers.ts`
 
-**Task 5.4: Unit tests** *(parallel-safe)*
-- Files: `__tests__/unit/filter.test.ts`, `__tests__/unit/rent.test.ts`, `__tests__/unit/local-mappings.test.ts`
+**Task 0.10.4: Unit tests** *(parallel-safe)*
+- Files: `__tests__/unit/filter.test.ts`, `__tests__/unit/rent.test.ts`, `__tests__/unit/local-mappings.test.ts`, `__tests__/unit/pipeline-steps.test.ts`
 - Pure function tests: happy path + edge case per function
 - Filter: credit excluded, cc payment excluded, debit spending included
 - Rent: pre-March 2026, post-March 2026, debit rent
 - Mappings: exact match, substring, case-insensitive, extractLocation, no match
-- LOC: ~200
+- **Pipeline step tests**: verify each step returns correct `Result` via `pipe()` assertions
+  - `expect(result.ok).toBe(true)` / `expect(result.ok).toBe(false)`
+  - Verify `pipe()` chain composition produces expected final result
+- LOC: ~250
 - Touches: `__tests__/unit/*.test.ts`
 
-**Task 5.5: Integration tests** *(parallel-safe)*
-- Files: `__tests__/integration/sync-workflow.test.ts`, `__tests__/integration/categorization.test.ts`, `__tests__/integration/export.test.ts`
+**Task 0.10.5: Integration tests** *(parallel-safe)*
+- Files: `__tests__/integration/sync-workflow.test.ts`, `__tests__/integration/categorization.test.ts`, `__tests__/integration/corpus-lineage.test.ts`, `__tests__/integration/export.test.ts`
+- All tests use `createTestContext()` for `AppContext { db, corpus }`
 - Scenarios:
   - Full sync creates correct DB records
+  - **Full sync creates corpus snapshots** (raw-transactions, raw-accounts, raw-balances, sync-results)
   - Exclusion rules filter correctly
   - Rent calculation works for pre/post March 2026
   - Duplicate prevention via external_id
-  - Dry-run produces no DB changes
+  - Dry-run produces no DB changes (but still creates corpus snapshots)
   - Date range filtering works
   - Unknown merchants → "Other"
   - Sync run record created with correct counts
   - Export creates correct markdown files
   - Export handles duplicate filenames with suffixes
-- LOC: ~350
+  - **Corpus lineage**: sync-results snapshot `parents` array contains raw-transactions snapshot IDs
+  - **Deterministic replay**: extract raw transactions from corpus snapshot, re-run pipeline, get identical results
+  - **Corpus deduplication**: re-syncing same data doesn't create duplicate snapshots
+- LOC: ~450
 - Touches: `__tests__/integration/*.test.ts`
 
-> Tasks 5.1–5.5 can all run in **parallel** (no shared files).
-> **Phase 5 total: ~1,150 LOC**
+> Tasks 0.10.1–0.10.5 can all run in **parallel** (no shared files).
+> **Phase 0.10 total: ~1,370 LOC**
 > Verification: full test suite, lint, COMMIT
 
 ---
 
 ### M0 Total Estimate
 
-| Phase | LOC | Tasks | Parallelizable |
-|-------|-----|-------|----------------|
-| 0: Scaffold | ~670 | 4 | Sequential |
-| 1: Pipeline + In-Memory | ~560 | 6 | 5 parallel + 1 sequential |
-| 2: Services | ~560 | 4 | 3 parallel + 1 sequential |
-| 3: Providers | ~510 | 4 | 2 parallel + 2 sequential |
-| 4: CLI Commands | ~450 | 4 | 3 parallel + 1 sequential |
-| 5: Mappings + Tests + SKILL | ~1,150 | 5 | All parallel |
-| **Total** | **~3,900** | **27** | |
+| Phase | LOC | Tasks | Parallelizable | Status |
+|-------|-----|-------|----------------|--------|
+| 0: Scaffold | ~740 | 4 | Sequential | ✅ COMPLETE |
+| 0.5: Corpus Stores | ~181 | 3 | Sequential | ✅ COMPLETE |
+| 0.6: Pipeline + In-Memory | ~620 | 6 | 5 parallel + 1 sequential | Pending |
+| 0.7: Services + Corpus | ~660 | 4 | 3 parallel + 1 sequential | Pending |
+| 0.8: Providers + Corpus Utilities | ~580 | 4 | 2 parallel + 2 sequential | Pending |
+| 0.9: CLI Commands + AppContext | ~490 | 4 | 3 parallel + 1 sequential | Pending |
+| 0.10: Tests + Mappings + SKILL | ~1,370 | 5 | All parallel | Pending |
+| **Total** | **~4,641** | **30** | | |
 
 ### Execution Plan
 
 ```
-Phase 0: Scaffold (sequential)
+Phase 0: Scaffold (sequential) ✅ COMPLETE
 ├── Task 0.1: Project scaffold (package.json, tsconfig, biome, drizzle.config)
-├── Task 0.2: Error types + provider interfaces + shared types
-├── Task 0.3: Drizzle schema + DB client + generate migration
-├── Task 0.4: Config loader + example config + config schema
-→ Verification: typecheck, migration generated, COMMIT
+├── Task 0.2: Error types + provider interfaces + shared types + fromFetchError
+├── Task 0.3: Drizzle schema + DB client + AppContext + generate migration
+├── Task 0.4: Config loader + corpus_dir + example config
+→ COMMITTED
 
-Phase 1: Pipeline + In-Memory Provider
-├── [PARALLEL] Task 1.1: filter.ts
-├── [PARALLEL] Task 1.2: rent.ts
-├── [PARALLEL] Task 1.3: local-mappings.ts
-├── [PARALLEL] Task 1.4: enrich-mapper.ts
-├── [PARALLEL] Task 1.5: in-memory provider
-├── [SEQUENTIAL] Task 1.6: categorizer.ts (depends on 1.1–1.4)
+Phase 0.5: Corpus Store Integration (sequential) ✅ COMPLETE
+├── Task 0.5.1: Corpus Zod schemas (raw snapshots + sync results)
+├── Task 0.5.2: Corpus store definitions (define_store + json_codec)
+├── Task 0.5.3: Corpus client (createCorpus + createTestCorpus) + re-exports
+→ COMMITTED
+
+Phase 0.6: Pipeline + In-Memory Provider
+├── [PARALLEL] Task 0.6.1: filter.ts (pure exclusion function)
+├── [PARALLEL] Task 0.6.2: rent.ts (pure rent handler)
+├── [PARALLEL] Task 0.6.3: local-mappings.ts (pipe + try_catch for file load)
+├── [PARALLEL] Task 0.6.4: enrich-mapper.ts (pure mapping function)
+├── [PARALLEL] Task 0.6.5: in-memory provider
+├── [SEQUENTIAL] Task 0.6.6: categorizer.ts — pipe().flat_map() chain (depends on 0.6.1–0.6.4)
 → Verification: typecheck, COMMIT
 
-Phase 2: Services
-├── [PARALLEL] Task 2.1: transaction-service.ts
-├── [PARALLEL] Task 2.2: account-service.ts
-├── [PARALLEL] Task 2.3: export-service.ts
-├── [SEQUENTIAL] Task 2.4: sync-service.ts (depends on 2.1, 2.2)
+Phase 0.7: Services + Corpus
+├── [PARALLEL] Task 0.7.1: transaction-service.ts (pipe + try_catch_async)
+├── [PARALLEL] Task 0.7.2: account-service.ts (pipe + try_catch_async)
+├── [PARALLEL] Task 0.7.3: export-service.ts (pipe + try_catch for file I/O)
+├── [SEQUENTIAL] Task 0.7.4: sync-service.ts — corpus snapshot → pipeline → materialize (depends on 0.7.1, 0.7.2, Phase 0.6)
 → Verification: typecheck, COMMIT
 
-Phase 3: Providers
-├── [PARALLEL] Task 3.1: Basiq HTTP client + types
-├── [PARALLEL] Task 3.3: CSV provider
-├── [SEQUENTIAL] Task 3.2: Basiq BankProvider (depends on 3.1)
-├── [SEQUENTIAL] Task 3.4: Provider factory (depends on 3.2, 3.3)
+Phase 0.8: Providers + Corpus Utilities
+├── [PARALLEL] Task 0.8.1: Basiq HTTP client (fetch_result + Semaphore + pipe)
+├── [PARALLEL] Task 0.8.3: CSV provider (pipe + try_catch)
+├── [SEQUENTIAL] Task 0.8.2: Basiq BankProvider + parallel_map (depends on 0.8.1)
+├── [SEQUENTIAL] Task 0.8.4: Provider factory (depends on 0.8.2, 0.8.3)
 → Verification: typecheck, COMMIT
 
-Phase 4: CLI Commands
-├── [PARALLEL] Task 4.2: accounts command
-├── [PARALLEL] Task 4.3: mappings command
-├── [PARALLEL] Task 4.4: export + import commands
-├── [SEQUENTIAL] Task 4.1: CLI entry point + sync command (wires all commands)
+Phase 0.9: CLI Commands + AppContext
+├── [PARALLEL] Task 0.9.2: accounts command (AppContext + pipe)
+├── [PARALLEL] Task 0.9.3: mappings command (AppContext + pipe)
+├── [PARALLEL] Task 0.9.4: export + import commands (AppContext + pipe)
+├── [SEQUENTIAL] Task 0.9.1: CLI entry point + sync command (wires all commands)
 → Verification: typecheck, COMMIT
 
-Phase 5: Mappings + Tests + SKILL.md
-├── [PARALLEL] Task 5.1: merchant-mappings.jsonc + JSON schemas
-├── [PARALLEL] Task 5.2: SKILL.md
-├── [PARALLEL] Task 5.3: Test helpers + fixtures
-├── [PARALLEL] Task 5.4: Unit tests
-├── [PARALLEL] Task 5.5: Integration tests
+Phase 0.10: Tests + Mappings + SKILL.md
+├── [PARALLEL] Task 0.10.1: merchant-mappings.jsonc + JSON schemas
+├── [PARALLEL] Task 0.10.2: SKILL.md (includes corpus architecture)
+├── [PARALLEL] Task 0.10.3: Test helpers + createTestContext()
+├── [PARALLEL] Task 0.10.4: Unit tests (filter, rent, mappings, pipeline pipe() assertions)
+├── [PARALLEL] Task 0.10.5: Integration tests (sync, corpus snapshots, lineage, replay, export)
 → Verification: full test suite, lint, COMMIT
 ```
 
@@ -1149,18 +1327,23 @@ Phase 5: Mappings + Tests + SKILL.md
 **Scope**:
 - Modify `sync-service.ts` to call `provider.getAccountBalances()` after transaction sync
 - Upsert into `snapshots` table (one per account per day)
+- Raw balances already snapshotted to `corpus.stores["raw-balances"]` in M0 sync workflow
 - Add `snapshot` CLI command for manual trigger (calls `getAccountBalances()` without syncing transactions)
+  - Constructs `AppContext { db, corpus }` from config
 - Add `snapshot-service.ts` — get latest snapshot per account, get history
+  - Receives `AppContext`, uses `pipe()` + `try_catch_async` for DB queries
 - Add `networth-service.ts` — sum latest balance snapshots by account type:
   - `net_worth = sum(savings) + sum(transaction) - abs(sum(credit))`
   - (Super and investments not included yet — added in M2/M3)
+  - Uses `pipe()` for composing: fetch snapshots → group by type → calculate
 - Add `networth` CLI command:
   - Default: show current net worth breakdown
   - `--history`: table of net worth over time
   - `--format csv|json|table`
+  - Constructs `AppContext` from config
 - Add `config.sync.auto_snapshot` flag (default true)
 
-**Estimated LOC**: ~600
+**Estimated LOC**: ~650
 **Dependencies**: M0 complete
 **Key files**: `src/services/snapshot-service.ts`, `src/services/networth-service.ts`, `src/commands/snapshot.ts`, `src/commands/networth.ts`
 
@@ -1171,17 +1354,22 @@ Phase 5: Mappings + Tests + SKILL.md
 **Scope**:
 - Investigate REST Super via Basiq `GET /connectors` endpoint
   - If supported: implement `BasiqSuperProvider` using Basiq accounts/transactions for super accounts
+    - Uses `fetch_result()` + `errors.fromFetchError` for HTTP calls
   - If not: implement `ManualSuperProvider` (JSON/CSV import)
+    - Uses `pipe()` + `try_catch` for file I/O
 - `SuperProvider` interface (already defined in types)
 - Store balance in `snapshots` table (account type = "super")
 - Store contributions in `contributions` table
+- **Snapshot raw super data** to corpus stores (raw-accounts, raw-balances for super)
+- Services receive `AppContext { db, corpus }`
 - Super commands:
   - `budget-sync super balance` — current super balance
   - `budget-sync super contributions [--from] [--to]` — contribution history
   - `budget-sync super import <file>` — manual import fallback
+  - All construct `AppContext` from config
 - Net worth now includes super balance
 
-**Estimated LOC**: ~800
+**Estimated LOC**: ~850
 **Dependencies**: M1 complete (networth service exists)
 **DECISION NEEDED**: Basiq connector availability for REST Super — can only determine at runtime with a Basiq account. Plan should have both paths ready.
 
@@ -1199,15 +1387,21 @@ Phase 5: Mappings + Tests + SKILL.md
   ```json
   { "ticker": "DHHF", "units": 100, "purchasePrice": 28.50 }
   ```
+  - Uses `pipe()` + `try_catch` for file operations
 - `PriceLookupService` — fetch current ASX prices for tickers
+  - Uses `fetch_result()` + `errors.fromFetchError` for HTTP calls
+  - Uses `Semaphore` for rate limiting API calls
+- **Snapshot raw holdings** to corpus stores
 - Store in `holdings` table (snapshot per date)
+- Services receive `AppContext { db, corpus }`
 - Investment commands:
   - `budget-sync investments list` — current holdings with market value
   - `budget-sync investments import <file>` — import holdings
   - `budget-sync investments performance [--from] [--to]` — unrealized P&L
+  - All construct `AppContext` from config
 - Net worth now includes investment values
 
-**Estimated LOC**: ~1,000
+**Estimated LOC**: ~1,050
 **Dependencies**: M1 complete
 **DECISION NEEDED**: Price data source — free ASX API vs Yahoo Finance vs Alpha Vantage. Recommend starting with manual price entry and adding API later.
 
@@ -1218,23 +1412,28 @@ Phase 5: Mappings + Tests + SKILL.md
 ### Principles
 
 1. **In-memory SQLite** — every test gets a fresh `:memory:` database with migrations applied
-2. **In-memory providers** — `InMemoryBankProvider` with pre-loaded test data. No HTTP mocking.
-3. **Integration-first** — test user workflows end-to-end through the service layer
-4. **No mocks** — use Provider pattern instead. If you need to spy, the interface is wrong.
-5. **Temp filesystem** — export tests write to a temp directory, verify contents, clean up
+2. **In-memory corpus** — every test gets a fresh `create_memory_backend()` corpus. No filesystem.
+3. **In-memory providers** — `InMemoryBankProvider` with pre-loaded test data. No HTTP mocking.
+4. **`AppContext` per test** — `createTestContext()` returns `{ db, corpus }` with both in-memory
+5. **Integration-first** — test user workflows end-to-end through the service layer
+6. **No mocks** — use Provider pattern instead. If you need to spy, the interface is wrong.
+7. **Temp filesystem** — export tests write to a temp directory, verify contents, clean up
+8. **Corpus snapshot verification** — integration tests assert that corpus stores contain expected snapshots
+9. **Lineage verification** — tests assert `parents` arrays link sync-results to raw-transactions
+10. **Deterministic replay** — tests extract raw data from corpus, re-run pipeline, verify identical output
 
 ### Test Architecture
 
 ```
-InMemoryBankProvider          In-memory SQLite
-  (pre-loaded test data)       (fresh per test)
-         │                          │
-         └──── Sync Service ────────┘
-                    │
-              Assertions on:
-              - DB records (transactions, accounts, sync_runs)
-              - Export files (temp directory)
-              - Service return values (Result types)
+InMemoryBankProvider          In-memory SQLite     In-memory Corpus
+  (pre-loaded test data)       (fresh per test)     (fresh per test)
+         │                          │                     │
+         └──── Sync Service ────────┤─────────────────────┘
+                    │               │                     │
+              Assertions on:        │                     │
+              - DB records          │   - Corpus snapshots
+              - Export files        │   - Lineage (parents)
+              - Result types        │   - Replay consistency
 ```
 
 ### Test Helper
@@ -1242,17 +1441,16 @@ InMemoryBankProvider          In-memory SQLite
 ```typescript
 // __tests__/helpers.ts
 
-import { drizzle } from "drizzle-orm/bun-sqlite";
-import { Database } from "bun:sqlite";
-import { migrate } from "drizzle-orm/bun-sqlite/migrator";
-import * as schema from "../src/db/schema";
+import { createTestDb } from "../src/db/client";
+import { createTestCorpus } from "../src/corpus/client";
+import type { AppContext } from "../src/db/client";
 import { InMemoryBankProvider } from "../src/providers/in-memory/provider";
 
-export function createTestDb() {
-  const sqlite = new Database(":memory:");
-  const db = drizzle(sqlite, { schema });
-  migrate(db, { migrationsFolder: "./drizzle" });
-  return db;
+export function createTestContext(): AppContext {
+  return {
+    db: createTestDb(),
+    corpus: createTestCorpus(),
+  };
 }
 
 export function createTestProvider(options?: {
@@ -1289,6 +1487,25 @@ export function makeAccount(overrides?: Partial<AccountInfo>): AccountInfo {
     ...overrides,
   };
 }
+
+export function makeConfig(overrides?: Partial<AppConfig>): AppConfig {
+  return {
+    db_path: ":memory:",
+    corpus_dir: ":memory:",
+    vault_path: "/tmp/test-vault",
+    budget_dir: "Budget",
+    provider: "manual",
+    sync: { default_range_days: 30, auto_snapshot: true },
+    rent: {
+      solo_start_date: "2026-03-01",
+      solo_weekly_amount: 650,
+      shared_roommate_contribution: 450,
+      landlord_patterns: ["IPY*GRACZYKTHOMPSON"],
+      debit_rent_patterns: ["Internet Withdrawal.*Rent"],
+    },
+    ...overrides,
+  };
+}
 ```
 
 ### Key Test Scenarios
@@ -1296,25 +1513,31 @@ export function makeAccount(overrides?: Partial<AccountInfo>): AccountInfo {
 | # | Scenario | Type | What it validates |
 |---|----------|------|-------------------|
 | 1 | Full sync creates correct DB records | Integration | End-to-end pipeline |
-| 2 | Exclusion rules filter correctly | Unit | Credit, cc payments, savings, investments excluded |
-| 3 | Rent pre-March 2026 | Unit | Amount = charge − 450 |
-| 4 | Rent post-March 2026 | Unit | Amount = 650 fixed |
-| 5 | Duplicate prevention (external_id) | Integration | Same tx ID not re-imported |
-| 6 | Dry-run produces no DB changes | Integration | DB unchanged after dry-run |
-| 7 | Unknown merchant → "Other" | Integration | Fallback categorization |
-| 8 | Sync run record with counts | Integration | sync_runs table populated correctly |
-| 9 | Export creates correct markdown | Integration | Frontmatter format, filename, content |
-| 10 | Export handles filename collisions | Integration | `-2`, `-3` suffixes |
-| 11 | Woolworths location extraction | Unit | "WOOLWORTHS/1234 BRISBANE" → item "Woolworths BRISBANE" |
-| 12 | Local mapping case-insensitive | Unit | "firefly brisbane" matches "FIREFLY BRISBANE" |
-| 13 | Provider auth failure propagates | Integration | Result.err returned, no crash |
-| 14 | CSV import creates correct records | Integration | CSV → DB via CsvBankProvider |
-| 15 | Account discovery + upsert | Integration | New accounts created, existing updated |
+| 2 | Full sync creates corpus snapshots | Integration | raw-transactions, raw-accounts, raw-balances, sync-results stores populated |
+| 3 | Exclusion rules filter correctly | Unit | Credit, cc payments, savings, investments excluded |
+| 4 | Rent pre-March 2026 | Unit | Amount = charge − 450 |
+| 5 | Rent post-March 2026 | Unit | Amount = 650 fixed |
+| 6 | Duplicate prevention (external_id) | Integration | Same tx ID not re-imported |
+| 7 | Dry-run produces no DB changes | Integration | DB unchanged after dry-run |
+| 8 | Dry-run still creates corpus snapshots | Integration | Corpus stores populated even in dry-run |
+| 9 | Unknown merchant → "Other" | Integration | Fallback categorization |
+| 10 | Sync run record with counts | Integration | sync_runs table populated correctly |
+| 11 | Export creates correct markdown | Integration | Frontmatter format, filename, content |
+| 12 | Export handles filename collisions | Integration | `-2`, `-3` suffixes |
+| 13 | Woolworths location extraction | Unit | "WOOLWORTHS/1234 BRISBANE" → item "Woolworths BRISBANE" |
+| 14 | Local mapping case-insensitive | Unit | "firefly brisbane" matches "FIREFLY BRISBANE" |
+| 15 | Provider auth failure propagates | Integration | Result.err returned, no crash |
+| 16 | CSV import creates correct records | Integration | CSV → DB via CsvBankProvider |
+| 17 | Account discovery + upsert | Integration | New accounts created, existing updated |
+| 18 | Corpus lineage: parents linkage | Integration | sync-results `parents` contains raw-transactions snapshot IDs |
+| 19 | Deterministic replay from corpus | Integration | Re-run pipeline from stored corpus snapshot → identical categorized output |
+| 20 | Pipeline pipe() chain composition | Unit | Each step returns correct Result, chain short-circuits on match |
 
 ### What We Don't Test
 
 - Basiq HTTP responses (tested manually with real credentials)
 - SQLite engine behavior (that's SQLite's problem)
+- Corpus file backend behavior (that's corpus's problem — we test via memory backend)
 - Commander CLI parsing (framework responsibility)
 - File system permissions
 
@@ -1337,7 +1560,9 @@ Separate repo at `/Users/tom/dev/budget-sync` — CLI tool for automated transac
 - `bun run src/index.ts mappings unmapped` — see uncategorized transactions
 
 ### Architecture
-- **Source of truth**: SQLite database at `data/budget-sync.db`
+- **Source of truth (queries)**: SQLite database at `data/budget-sync.db`
+- **Source of truth (raw data)**: Corpus stores at `data/corpus/`
+- **Data flow**: Provider → corpus raw stores → pipeline → corpus sync-results → SQLite
 - **Obsidian export**: Optional — transactions can be exported as markdown notes
 - **Merchant mappings**: `merchant-mappings.jsonc` (human-edited, committed to repo)
 - **Config**: `config.jsonc` (gitignored — contains Basiq user ID)
@@ -1346,8 +1571,10 @@ Separate repo at `/Users/tom/dev/budget-sync` — CLI tool for automated transac
 ### Key Files
 - `SKILL.md` — full AI agent reference for the project
 - `src/db/schema.ts` — Drizzle ORM schema (all tables)
+- `src/db/client.ts` — `AppContext { db, corpus }` interface
+- `src/corpus/` — corpus store definitions, Zod schemas, client factory
 - `src/providers/types.ts` — BankProvider interface
-- `src/pipeline/categorizer.ts` — transaction categorization pipeline
+- `src/pipeline/categorizer.ts` — transaction categorization pipeline (pipe().flat_map() chain)
 - `merchant-mappings.jsonc` — merchant → category rules
 ```
 
