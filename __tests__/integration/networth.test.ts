@@ -67,7 +67,7 @@ describe("networth-service", () => {
 		expect(result.value.accounts).toHaveLength(0);
 	});
 
-	it("N4: net worth ignores super/investment accounts", async () => {
+	it("N4: net worth includes super but ignores investment accounts", async () => {
 		const savingsId = await seedAccount({ id: "ext-sav", type: "savings", name: "Savings" });
 		const superId = await seedAccount({ id: "ext-super", type: "super", name: "Super Fund" });
 		const investId = await seedAccount({ id: "ext-inv", type: "investment", name: "Shares" });
@@ -80,8 +80,9 @@ describe("networth-service", () => {
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
 
-		expect(result.value.netWorth).toBe(10000);
-		expect(result.value.accounts).toHaveLength(1);
+		expect(result.value.netWorth).toBe(60000);
+		expect(result.value.accounts).toHaveLength(2);
+		expect(result.value.components.super).toBe(50000);
 	});
 
 	it("N5: net worth history returns entries per date", async () => {
