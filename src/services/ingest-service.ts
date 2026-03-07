@@ -17,7 +17,7 @@ import type { DbError, PipelineError, ProviderError } from "../errors.js";
 import { errors } from "../errors.js";
 import { type PipelineContext, categorizeAll } from "../pipeline/categorizer.js";
 import { loadMappings } from "../pipeline/local-mappings.js";
-import type { AccountType, DocumentParser, RawTransaction, SyncStatus } from "../providers/types.js";
+import type { AccountType, DocumentParser, MerchantMappings, RawTransaction, SyncStatus } from "../providers/types.js";
 import { findAccountByExternalId, upsertAccount } from "./account-service.js";
 import { getCurrentNetWorth } from "./networth-service.js";
 import { createTransaction } from "./transaction-service.js";
@@ -32,6 +32,7 @@ export interface IngestOptions {
 	dateTo?: string;
 	dryRun?: boolean;
 	verbose?: boolean;
+	mappings?: MerchantMappings;
 }
 
 export interface IngestSummary {
@@ -232,14 +233,20 @@ export async function ingestDocument(
 	}));
 
 	// Step 10: Run categorization pipeline
-	const mappingsResult = loadMappings();
-	if (!mappingsResult.ok) {
-		await updateSyncRunStatus(ctx, syncRunId, "failed", mappingsResult.error.message);
-		return mappingsResult;
+	let mappings: MerchantMappings;
+	if (options?.mappings) {
+		mappings = options.mappings;
+	} else {
+		const mappingsResult = loadMappings();
+		if (!mappingsResult.ok) {
+			await updateSyncRunStatus(ctx, syncRunId, "failed", mappingsResult.error.message);
+			return mappingsResult;
+		}
+		mappings = mappingsResult.value;
 	}
 
 	const pipelineContext: PipelineContext = {
-		mappings: mappingsResult.value,
+		mappings,
 		rentConfig: config.rent,
 	};
 

@@ -3,7 +3,8 @@ import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 import type { AppDatabase } from "../db/client.js";
 import { accounts, snapshots } from "../db/schema.js";
 import { type DbError, errors } from "../errors.js";
-import type { AccountType } from "../providers/types.js";
+import type { AccountBalance, AccountType } from "../providers/types.js";
+import { findAccountByExternalId } from "./account-service.js";
 
 export type SnapshotRow = typeof snapshots.$inferSelect;
 
@@ -16,6 +17,32 @@ export interface SnapshotFilters {
 export interface EnrichedSnapshot extends SnapshotRow {
 	accountName: string;
 	accountType: AccountType;
+}
+
+/**
+ * Iterate over balances, resolve accounts by external ID, and upsert snapshots.
+ */
+export async function materializeBalances(
+	db: AppDatabase,
+	providerName: string,
+	balances: AccountBalance[],
+	syncRunId?: string,
+): Promise<Result<number, DbError>> {
+	let count = 0;
+	for (const bal of balances) {
+		const accountResult = await findAccountByExternalId(db, providerName, bal.accountId);
+		if (!accountResult.ok || !accountResult.value) continue;
+
+		const snapshotResult = await upsertSnapshot(db, {
+			accountId: accountResult.value.id,
+			date: bal.asOf,
+			balance: bal.balance,
+			available: bal.available,
+			syncRunId,
+		});
+		if (snapshotResult.ok) count++;
+	}
+	return ok(count);
 }
 
 /**

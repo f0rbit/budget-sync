@@ -4,8 +4,7 @@ import { createCorpus } from "../corpus/client.js";
 import type { RawBalancesSnapshot } from "../corpus/schemas.js";
 import { createDb } from "../db/client.js";
 import { createProvider } from "../providers/index.js";
-import { findAccountByExternalId } from "../services/account-service.js";
-import { upsertSnapshot } from "../services/snapshot-service.js";
+import { materializeBalances } from "../services/snapshot-service.js";
 
 export const snapshotCommand = new Command("snapshot")
 	.description("Capture current account balances without full sync")
@@ -72,25 +71,8 @@ export const snapshotCommand = new Command("snapshot")
 			tags: [`provider:${provider.name}`, `date:${today}`],
 		});
 
-		let materialized = 0;
-		for (const bal of balances) {
-			const accountResult = await findAccountByExternalId(db, provider.name, bal.accountId);
-			if (!accountResult.ok || !accountResult.value) continue;
-
-			const snapshotResult = await upsertSnapshot(db, {
-				accountId: accountResult.value.id,
-				date: bal.asOf,
-				balance: bal.balance,
-				available: bal.available,
-			});
-
-			if (snapshotResult.ok) {
-				materialized++;
-				if (options.verbose) {
-					console.log(`  ${accountResult.value.name}: $${bal.balance.toFixed(2)}`);
-				}
-			}
-		}
+		const matResult = await materializeBalances(db, provider.name, balances);
+		const materialized = matResult.ok ? matResult.value : 0;
 
 		console.log("Snapshot complete:");
 		console.log(`  Provider:          ${provider.name}`);

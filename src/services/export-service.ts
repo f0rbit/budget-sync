@@ -25,7 +25,7 @@ type TransactionRow = typeof transactions.$inferSelect;
 
 // === Functions ===
 
-function slugify(text: string): string {
+export function slugify(text: string): string {
 	return text
 		.toLowerCase()
 		.replace(/['']/g, "")
@@ -48,7 +48,7 @@ function generateFilename(tx: TransactionRow, existingFiles: Set<string>): strin
 	return filename;
 }
 
-function renderNote(tx: TransactionRow): string {
+export function renderNote(tx: TransactionRow): string {
 	const lines = [
 		"---",
 		`date: ${tx.date}`,
