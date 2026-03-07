@@ -8,6 +8,7 @@ export {
 	rawDocumentsStore,
 	aiParseResultsStore,
 	computationSnapshotsStore,
+	aiCategorizationResultsStore,
 } from "./stores.js";
 export type {
 	RawAccountsSnapshot,
@@ -18,4 +19,5 @@ export type {
 	RawDocumentSnapshot,
 	AiParseResultSnapshot,
 	ComputationSnapshot,
+	AiCategorizationResultSnapshot,
 } from "./schemas.js";

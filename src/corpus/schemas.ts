@@ -208,3 +208,39 @@ export const computationSnapshotSchema = z.object({
 });
 
 export type ComputationSnapshot = z.infer<typeof computationSnapshotSchema>;
+
+// === AI categorization result snapshot (AI-assigned categories for uncategorized transactions) ===
+
+export const aiCategorizationResultSnapshotSchema = z.object({
+	/** Which categorizer produced this result */
+	categorizer: z.string(),
+	/** When categorization was performed */
+	categorizedAt: z.string(),
+	/** Summary of the request */
+	request: z.object({
+		uncategorizedCount: z.number(),
+		contextTransactionCount: z.number(),
+	}),
+	/** The categorization result */
+	result: z.object({
+		categorizations: z.array(
+			z.object({
+				externalId: z.string(),
+				item: z.string(),
+				category: z.enum(CATEGORIES),
+				notes: z.string(),
+			}),
+		),
+		suggestedMappings: z.array(
+			z.object({
+				match: z.string(),
+				item: z.string(),
+				category: z.enum(CATEGORIES),
+			}),
+		),
+	}),
+	/** Raw AI response for auditing */
+	rawResponse: z.string().optional(),
+});
+
+export type AiCategorizationResultSnapshot = z.infer<typeof aiCategorizationResultSnapshotSchema>;

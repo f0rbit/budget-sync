@@ -1,5 +1,6 @@
 import { define_store, json_codec } from "@f0rbit/corpus";
 import {
+	aiCategorizationResultSnapshotSchema,
 	aiParseResultSnapshotSchema,
 	computationSnapshotSchema,
 	rawAccountsSnapshotSchema,
@@ -10,6 +11,7 @@ import {
 	syncResultSnapshotSchema,
 } from "./schemas.js";
 import type {
+	AiCategorizationResultSnapshot,
 	AiParseResultSnapshot,
 	ComputationSnapshot,
 	RawAccountsSnapshot,
@@ -66,4 +68,10 @@ export const computationSnapshotsStore = define_store<"computation-snapshots", C
 	"computation-snapshots",
 	json_codec(computationSnapshotSchema),
 	{ description: "Net worth and balance state after each ingestion" },
+);
+
+export const aiCategorizationResultsStore = define_store<"ai-categorization-results", AiCategorizationResultSnapshot>(
+	"ai-categorization-results",
+	json_codec(aiCategorizationResultSnapshotSchema),
+	{ description: "AI-assigned categories for transactions not matched by local mappings" },
 );

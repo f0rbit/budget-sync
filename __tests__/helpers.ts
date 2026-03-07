@@ -2,6 +2,7 @@ import { createId } from "@paralleldrive/cuid2";
 import type { AppConfig } from "../src/config.js";
 import { createTestCorpus } from "../src/corpus/client.js";
 import { type AppContext, createTestDb } from "../src/db/client.js";
+import { InMemoryAiCategorizer } from "../src/providers/in-memory/categorizer.js";
 import { InMemoryDocumentParser } from "../src/providers/in-memory/document-parser.js";
 import { InMemoryBankProvider } from "../src/providers/in-memory/provider.js";
 import { InMemorySuperProvider } from "../src/providers/in-memory/super-provider.js";
@@ -137,6 +138,10 @@ export function createTestDocumentParser(options?: {
 	const parser = new InMemoryDocumentParser();
 	if (options?.defaultResult) parser.setDefaultResult(options.defaultResult);
 	return parser;
+}
+
+export function createTestAiCategorizer(): InMemoryAiCategorizer {
+	return new InMemoryAiCategorizer();
 }
 
 export function makeParsedDocument(overrides?: Partial<ParsedDocument>): ParsedDocument {
