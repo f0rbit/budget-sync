@@ -10,7 +10,7 @@ Ingests bank documents (PDFs, CSVs, images) using Claude for extraction. Tracks:
 
 - Runtime: Bun
 - Database: SQLite + Drizzle ORM (`drizzle-orm/bun-sqlite`)
-- Data stores: `@f0rbit/corpus` stores (`raw-transactions`, `raw-accounts`, `raw-balances`, `sync-results`, `raw-contributions`, `raw-documents`, `ai-parse-results`, `computation-snapshots`)
+- Data stores: `@f0rbit/corpus` stores (`raw-transactions`, `raw-accounts`, `raw-balances`, `sync-results`, `raw-contributions`, `raw-documents`, `ai-parse-results`, `ai-categorization-results`, `computation-snapshots`)
 - AI parsing: `@anthropic-ai/sdk` (Claude for document extraction)
 - Error handling: `@f0rbit/corpus` `Result<T, E>` types -- never throw
   - `pipe()` for chaining, `flat_map()` for fallible steps
@@ -31,17 +31,18 @@ budget-sync/
     config.ts                         -- Zod schemas + loadConfig() / getAnthropicApiKey()
     errors.ts                         -- Discriminated union error types + constructor helpers
     commands/
-      ingest.ts                       -- `budget ingest` command (AI + CSV fast path)
+      ingest.ts                       -- `budget ingest` command (AI document ingestion)
       accounts.ts                     -- `budget-sync accounts` command handler
       mappings.ts                     -- `budget-sync mappings` command handler
       export.ts                       -- `budget-sync export` command handler
       snapshot.ts                       -- `budget-sync snapshot` command handler
       networth.ts                       -- `budget-sync networth` command handler
       super.ts                          -- `budget-sync super` command handler (balance, contributions, import)
+      transactions.ts                   -- `budget-sync transactions` command handler (list, summary, search)
     corpus/
       index.ts                        -- Barrel: re-exports AppCorpus, stores, snapshot types
       client.ts                       -- buildCorpus(), createCorpus(dataDir), createTestCorpus()
-      stores.ts                       -- define_store() calls for all 8 stores
+      stores.ts                       -- define_store() calls for all 9 stores
       schemas.ts                      -- Zod schemas for snapshot payloads
     db/
       schema.ts                       -- Drizzle table definitions (syncRuns, accounts, transactions, snapshots, holdings, contributions)
@@ -52,24 +53,27 @@ budget-sync/
       utils.ts                        -- generateExternalId() utility
       ai/
         parser.ts                     -- AnthropicDocumentParser: Claude API document parsing
+        categorizer.ts                -- AnthropicAiCategorizer: Claude API batch categorization
       csv/
         provider.ts                   -- CsvBankProvider: parses DD/MM/YYYY CSV, generates sha256 external IDs
+        document-parser.ts            -- CsvDocumentParser: CSV adapter for unified ingestDocument() pipeline
       in-memory/
         provider.ts                   -- InMemoryBankProvider: arrays + fail flags for testing
         super-provider.ts               -- InMemorySuperProvider for testing
         document-parser.ts             -- InMemoryDocumentParser for testing
+        categorizer.ts                  -- InMemoryAiCategorizer: configurable results + fail flags for testing
       manual-super/
         provider.ts                   -- ManualSuperProvider: JSON file import
     pipeline/
-      categorizer.ts                  -- categorizePipeline(tx, context), categorizeAll(txs, context)
+      categorizer.ts                  -- categorizePipeline(tx, context), categorizeAll(txs, context) with AI batch step
       filter.ts                       -- filterTransaction(tx, exclusions) -> Result<RawTransaction, ExcludedTransaction>
       rent.ts                         -- isRentTransaction(), calculateRentAmount(), handleRent()
-      local-mappings.ts               -- loadMappings(path?), matchTransaction(), applyMapping()
+      local-mappings.ts               -- loadMappings(path?), matchTransaction(), applyMapping(), appendMappings()
       fallback.ts                     -- createFallback()
     services/
       ingest-service.ts               -- 14-step document ingestion orchestrator
       account-service.ts              -- upsertAccount(), listAccounts(), deactivateAccount(), findAccountByExternalId()
-      transaction-service.ts          -- createTransaction(), getTransactions(filters), getUncategorized()
+      transaction-service.ts          -- createTransaction(), getTransactions(filters), getUncategorized(), searchTransactions(), getCategorySummary()
       export-service.ts               -- exportToObsidian(db, vaultPath, budgetDir, options)
       snapshot-service.ts               -- upsertSnapshot(), getLatestSnapshots(), getSnapshotHistory()
       networth-service.ts               -- getCurrentNetWorth(), getNetWorthHistory() with carry-forward
@@ -78,6 +82,8 @@ budget-sync/
   __tests__/
     integration/                      -- Integration tests (in-memory DB + corpus)
       ingest-workflow.test.ts           -- Ingest pipeline integration tests
+      ai-categorization.test.ts         -- AI categorization pipeline integration tests
+      transactions-cli.test.ts          -- Transactions CLI command tests
       snapshot.test.ts                  -- Snapshot service + sync integration (10 scenarios)
       networth.test.ts                  -- Net worth calculation tests (8 scenarios, includes super)
       super-import.test.ts              -- Super import integration tests (11 scenarios)
@@ -97,7 +103,7 @@ budget-sync/
 ### Data Flow
 
 ```
-Document (PDF/CSV/image) -> corpus raw-documents -> AI parser -> corpus ai-parse-results -> pipeline (pure) -> corpus sync-results -> SQLite -> corpus computation-snapshots
+Document (PDF/CSV/image) -> corpus raw-documents -> AI parser -> corpus ai-parse-results -> AI categorizer -> corpus ai-categorization-results -> pipeline (pure) -> corpus sync-results -> SQLite -> corpus computation-snapshots
 ```
 
 ### Stores
@@ -113,11 +119,12 @@ Defined in `src/corpus/stores.ts` using `define_store()` + `json_codec()`:
 | `raw-contributions` | `RawContributionsSnapshot` | `rawContributionsSnapshotSchema` | Raw super contribution data per import |
 | `raw-documents` | `RawDocumentSnapshot` | `rawDocumentSnapshotSchema` | Full document content (base64 for binary, text for CSV) |
 | `ai-parse-results` | `AiParseResultSnapshot` | `aiParseResultSnapshotSchema` | AI-extracted transactions and account info |
+| `ai-categorization-results` | `AiCategorizationResultSnapshot` | `aiCategorizationResultSnapshotSchema` | AI categorization response data, suggested mappings, corpus lineage |
 | `computation-snapshots` | `ComputationSnapshot` | `computationSnapshotSchema` | Net worth state after ingestion |
 
 ### Lineage
 
-Ingestion creates a 4-store lineage chain: `raw-documents` → `ai-parse-results` → `sync-results` → `computation-snapshots`.
+Ingestion creates a 5-store lineage chain: `raw-documents` → `ai-parse-results` → `ai-categorization-results` → `sync-results` → `computation-snapshots`.
 
 Each store references its parents via the `parents` array on `put()`:
 
@@ -135,7 +142,7 @@ This enables deterministic replay: re-run categorization from stored corpus snap
 - Production: `create_file_backend({ base_path: config.corpus_dir })` (from `@f0rbit/corpus/file`)
 - Testing: `create_memory_backend()` -- fast, isolated, no filesystem
 
-Both go through `buildCorpus(backend)` which attaches all 8 stores via `.with_store()`.
+Both go through `buildCorpus(backend)` which attaches all 9 stores via `.with_store()`.
 
 ## Key Patterns
 
@@ -148,7 +155,7 @@ All error types are discriminated unions in `src/errors.ts`:
 | `ProviderError` | `AUTH_FAILED`, `RATE_LIMITED`, `NOT_FOUND`, `API_ERROR`, `NETWORK_ERROR`, `PARSE_ERROR` |
 | `ConfigError` | `CONFIG_NOT_FOUND`, `CONFIG_INVALID` |
 | `DbError` | `DB_ERROR`, `DUPLICATE` |
-| `PipelineError` | `MAPPING_LOAD_FAILED`, `CATEGORIZATION_FAILED` |
+| `PipelineError` | `MAPPING_LOAD_FAILED`, `CATEGORIZATION_FAILED`, `AI_CATEGORIZATION_FAILED` |
 | `ExportError` | `WRITE_FAILED`, `VAULT_NOT_FOUND` |
 | `AppError` | Union of all above |
 
@@ -216,14 +223,33 @@ Implementations:
 | Class | Module | Purpose |
 |-------|--------|---------|
 | `AnthropicDocumentParser` | `src/providers/ai/parser.ts` | Production: Claude API for PDF, image, CSV, text extraction |
+| `CsvDocumentParser` | `src/providers/csv/document-parser.ts` | CSV adapter: auto-detected by extension, structured parse without AI |
 | `InMemoryDocumentParser` | `src/providers/in-memory/document-parser.ts` | Testing: canned responses + fail flags |
+
+### AI Categorizer
+
+`AiCategorizer` interface in `src/providers/types.ts`:
+
+```ts
+interface AiCategorizer {
+  readonly name: string;
+  categorize(request: AiCategorizationRequest): Promise<Result<AiCategorizationResult, ProviderError>>;
+}
+```
+
+Implementations:
+
+| Class | Module | Purpose |
+|-------|--------|---------|
+| `AnthropicAiCategorizer` | `src/providers/ai/categorizer.ts` | Production: Claude API for batch categorization |
+| `InMemoryAiCategorizer` | `src/providers/in-memory/categorizer.ts` | Testing: configurable results + fail flags |
 
 ### Transaction Pipeline
 
 Orchestrated by `categorizePipeline()` in `src/pipeline/categorizer.ts`.
 
 ```
-PipelineContext = { mappings: MerchantMappings, rentConfig: RentConfig }
+PipelineContext = { mappings: MerchantMappings, rentConfig: RentConfig, aiCategorizer?: AiCategorizer }
 ```
 
 Steps (sequential if-return, NOT pipe().flat_map()):
@@ -231,9 +257,12 @@ Steps (sequential if-return, NOT pipe().flat_map()):
 1. **Filter** (`filterTransaction`): Exclude credits and pattern-matched exclusions. Returns `Result<RawTransaction, ExcludedTransaction>`.
 2. **Rent** (`isRentTransaction` + `handleRent`): Short-circuit if landlord or debit rent pattern matches. `calculateRentAmount()` handles solo vs. shared logic based on `solo_start_date`.
 3. **Local mapping** (`matchTransaction` + `applyMapping`): Case-insensitive substring match against `merchant-mappings.jsonc` rules. `extractLocation` option extracts location suffix from description.
-4. **Fallback** (`createFallback`): Category "Other", item = raw description.
+4. **AI batch categorization**: Batch all uncategorized transactions → Claude API → categorize + suggest mappings. Auto-appends suggested mappings to `merchant-mappings.jsonc` via `appendMappings()`. Non-fatal: if API fails, transactions proceed to fallback.
+5. **Fallback** (`createFallback`): Category "Other", item = raw description. Only reached if AI absent or fails.
 
-Batch function: `categorizeAll(transactions, context)` returns `{ categorized: CategorizedTransaction[], excluded: ExcludedTransaction[] }`.
+Batch function: `categorizeAll(transactions, context)` returns `{ categorized: CategorizedTransaction[], excluded: ExcludedTransaction[], aiCategorizationResult?: AiCategorizationResult }`.
+
+Auto-mapping: AI categorization suggests merchant mappings which are auto-appended to `merchant-mappings.jsonc` via `appendMappings()` using `jsonc-parser` `modify()`/`applyEdits()`. This preserves JSONC comments and makes the system self-improving over time.
 
 ### Ingest Orchestration
 
@@ -243,18 +272,19 @@ Batch function: `categorizeAll(transactions, context)` returns `{ categorized: C
 2. Read document from filesystem (PDF, CSV, image, text)
 3. Compute content hash for dedup (skip if already ingested)
 4. Snapshot document to `raw-documents` corpus store (base64 for binary, raw text for CSV)
-5. Route to parser: CSV fast path (`--parser csv`) or AI parser
-6. AI parser: send document to Claude API for extraction (or CSV parser: structured parse)
+5. Route to parser: CSV files auto-detected by extension → `CsvDocumentParser`, otherwise AI parser
+6. Parser: send document to Claude API for extraction (or CSV parser: structured parse)
 7. Snapshot parse results to `ai-parse-results` corpus store (with parent → raw-documents)
 8. Resolve account (from `--account` flag or AI-extracted account info) → upsert into SQLite
 9. Snapshot raw transactions to `raw-transactions` corpus store
-10. Run categorization pipeline (`categorizeAll`)
-11. Snapshot sync results to `sync-results` corpus store (with parent → ai-parse-results)
-12. Materialize categorized transactions into SQLite (skip in dry-run, dedup by external_id)
-13. Compute net worth → snapshot to `computation-snapshots` corpus store (with parent → sync-results)
-14. Update `sync_runs` row with final counts, return `IngestSummary`
+10. Run categorization pipeline (`categorizeAll`) — includes AI batch categorization step
+11. Snapshot AI categorization results to `ai-categorization-results` corpus store (if AI was used)
+12. Snapshot sync results to `sync-results` corpus store (with parent → ai-categorization-results or ai-parse-results)
+13. Materialize categorized transactions into SQLite (skip in dry-run, dedup by external_id)
+14. Compute net worth → snapshot to `computation-snapshots` corpus store (with parent → sync-results)
+15. Update `sync_runs` row with final counts, return `IngestSummary`
 
-CSV fast path: when `--parser csv` is specified, step 5-6 bypass the AI parser entirely and use `CsvBankProvider`-style structured parsing. No `ANTHROPIC_API_KEY` required.
+All files go through the unified `ingestDocument()` pipeline. CSV files are auto-detected by extension and use `CsvDocumentParser`; no `--parser csv` flag needed.
 
 ### Database
 
@@ -283,6 +313,13 @@ CSV fast path: when `--parser csv` is specified, step 5-6 bypass the AI parser e
 ### Export
 
 `exportToObsidian()` in `src/services/export-service.ts` writes Markdown notes with YAML frontmatter to an Obsidian vault. One file per transaction, slugified filenames with date prefix, dedup counter for collisions.
+
+### Transaction Queries
+
+Service functions in `src/services/transaction-service.ts`:
+
+- `searchTransactions(db, query, limit?)` — LIKE search on `item` and `rawDescription` fields
+- `getCategorySummary(db, filters?)` — category aggregation with totals and counts
 
 ## Value Types
 
@@ -366,7 +403,7 @@ bun run db:migrate    # bunx drizzle-kit migrate
 
 ```sh
 bun run dev -- ingest statement.pdf --account "Everyday Account"
-bun run dev -- ingest transactions.csv --parser csv
+bun run dev -- ingest transactions.csv                          # CSV auto-detected by extension
 bun run dev -- ingest bank-statement.pdf --dry-run --verbose
 bun run dev -- accounts
 bun run dev -- export
@@ -377,6 +414,9 @@ bun run dev -- networth --history --format csv
 bun run dev -- super balance
 bun run dev -- super contributions
 bun run dev -- super import data.json --account-name "My Super Fund"
+bun run dev -- transactions list [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--category CAT] [--account ID] [--limit N]
+bun run dev -- transactions summary [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--account ID]
+bun run dev -- transactions search <query> [--limit N]
 ```
 
 ## Gotchas
@@ -400,8 +440,13 @@ bun run dev -- super import data.json --account-name "My Super Fund"
 - AI-generated external IDs use `ai-${sha256(date|description|amount|direction)}` prefix
 - Document dedup uses content hash -- re-ingesting same file detected before AI call
 - AI parsing is non-deterministic -- same document may produce slightly different results across runs
-- ANTHROPIC_API_KEY env var required for AI parsing, not needed for CSV fast path
+- ANTHROPIC_API_KEY env var required for AI parsing and AI categorization, not needed for CSV-only ingestion
 - Full document binary stored in corpus (base64 for PDFs/images, raw text for CSVs)
+- AI categorization is non-fatal — API failure degrades gracefully to "Other" category
+- `appendMappings()` preserves JSONC comments via `jsonc-parser` `modify()`/`applyEdits()`
+- CSV fast path removed — all files go through unified `ingestDocument()` pipeline; CSV auto-detected by extension
+- `InMemoryAiCategorizer` auto-generates suggested mappings from categorization results if none explicitly configured
+- Real `merchant-mappings.jsonc` on disk may be modified by AI auto-mapping — tests should use isolated temp files or injected mappings
 
 ## M1: Snapshots + Net Worth
 
@@ -428,13 +473,16 @@ bun run dev -- super import data.json --account-name "My Super Fund"
 - `super` keyword is valid as a TS property name in object literals and interfaces
 - Services use `computeNetWorth()` which sums: savings + transaction - credit + super
 - 98 tests passing across 12 files after M2
+- 190 tests across ~20 files after AI Categorization + CLI feature
 
 ## Pivot: Basiq → AI Ingestion
 
 - Basiq integration removed entirely (no bank API dependency)
 - `budget ingest <file>` replaces both `budget sync` and `budget import`
 - AI parser (AnthropicDocumentParser) handles PDFs, images, CSVs, any text
-- CSV fast path (`--parser csv`) available for known CSV formats
-- Full ingestion pipeline: read → corpus store → AI parse → corpus → categorize → corpus → materialize → net worth → corpus
-- 8 corpus stores total, 4-store lineage chain per ingestion
-- Pipeline simplified: filter → rent → local-mappings → fallback (enrichment removed)
+- CSV files auto-detected by extension, use `CsvDocumentParser` adapter (no `--parser csv` flag)
+- Full ingestion pipeline: read → corpus store → AI parse → corpus → AI categorize → corpus → categorize → corpus → materialize → net worth → corpus
+- 9 corpus stores total, 5-store lineage chain per ingestion
+- Pipeline: filter → rent → local-mappings → AI batch categorization → fallback
+- AI categorization auto-appends suggested merchant mappings to `merchant-mappings.jsonc`
+- `transactions` CLI: list, summary, search commands for querying ingested data
