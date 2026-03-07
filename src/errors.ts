@@ -22,7 +22,8 @@ export type DbError =
 // === Pipeline Errors ===
 export type PipelineError =
 	| { code: "MAPPING_LOAD_FAILED"; message: string }
-	| { code: "CATEGORIZATION_FAILED"; message: string; transactionId: string };
+	| { code: "CATEGORIZATION_FAILED"; message: string; transactionId: string }
+	| { code: "AI_CATEGORIZATION_FAILED"; message: string };
 
 // === Export Errors ===
 export type ExportError =
@@ -93,6 +94,10 @@ export const errors = {
 		code: "CATEGORIZATION_FAILED",
 		message,
 		transactionId,
+	}),
+	aiCategorizationFailed: (message: string): PipelineError => ({
+		code: "AI_CATEGORIZATION_FAILED",
+		message,
 	}),
 
 	writeFailed: (path: string, message: string): ExportError => ({

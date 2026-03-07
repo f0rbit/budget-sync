@@ -227,3 +227,61 @@ export interface DocumentParser {
 		accountHint?: { accountName?: string; accountType?: AccountType },
 	): Promise<Result<ParsedDocument, ProviderError>>;
 }
+
+// === Category Descriptions (used in AI prompts) ===
+
+export const CATEGORY_DESCRIPTIONS: Record<Category, string> = {
+	Rent: "Housing rent payments",
+	Woolworths: "Woolworths grocery runs (in-store and online)",
+	"Eating Out": "Restaurants, takeaway, cafes, coffee, food delivery, paying mates back for food",
+	Alcohol: "Bars, bottle shops, pub drinks. Firefly Brisbane is always Alcohol",
+	Subscriptions: "Recurring digital services: Adobe, Apple, Spotify, Amazon Prime, Uber One, AWS",
+	Transport: "Fuel, parking, public transit (Translink, Myki), Uber rides, e-scooters (Neuron), airport parking",
+	Bills: "Utilities (water, electricity), internet (Gigacomm), phone plan (Woolies Mobile), insurance",
+	Health: "Medical, pharmacy (Chemist Warehouse), gym, health insurance (GU Health)",
+	Entertainment:
+		"Events, concerts, museums, galleries (ACCA, NGV, QPAC, Sea Life), games (Nintendo), badminton, cinema",
+	Shopping: "Clothing, electronics (JB Hi-Fi, Digidirect), homewares, gifts, accessories, Officeworks",
+	Other: "Anything that doesn't fit the above categories",
+};
+
+// === AI Categorization (pipeline step for uncategorized transactions) ===
+
+export interface AiCategorizationRequest {
+	uncategorized: Array<{
+		externalId: string;
+		description: string;
+		amount: number;
+		date: string;
+	}>;
+	context: {
+		categorizedTransactions: Array<{
+			item: string;
+			category: Category;
+			amount: number;
+			date: string;
+		}>;
+		categories: Array<{ name: Category; description: string }>;
+		existingMappings: MerchantMapping[];
+	};
+}
+
+export interface AiCategorizationResult {
+	categorizations: Array<{
+		externalId: string;
+		item: string;
+		category: Category;
+		notes: string;
+	}>;
+	suggestedMappings: Array<{
+		match: string;
+		item: string;
+		category: Category;
+	}>;
+	rawResponse?: string;
+}
+
+export interface AiCategorizer {
+	readonly name: string;
+	categorize(request: AiCategorizationRequest): Promise<Result<AiCategorizationResult, ProviderError>>;
+}
