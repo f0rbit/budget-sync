@@ -1,0 +1,9 @@
+node_modules/
+dist/
+data/
+.env
+config.jsonc
+bun.lockb
+*.db
+*.db-journal
+.DS_Store

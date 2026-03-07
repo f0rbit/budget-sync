@@ -1,0 +1,21 @@
+{
+	"compilerOptions": {
+		"strict": true,
+		"target": "ESNext",
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"esModuleInterop": true,
+		"resolveJsonModule": true,
+		"declaration": true,
+		"declarationMap": true,
+		"sourceMap": true,
+		"outDir": "./dist",
+		"rootDir": ".",
+		"skipLibCheck": true,
+		"noUncheckedIndexedAccess": true,
+		"forceConsistentCasingInFileNames": true,
+		"types": ["bun-types"]
+	},
+	"include": ["src/**/*.ts", "__tests__/**/*.ts"],
+	"exclude": ["node_modules", "dist", "drizzle"]
+}

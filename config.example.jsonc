@@ -1,0 +1,35 @@
+{
+  "$schema": "./config.schema.json",
+
+  // Where the SQLite database lives
+  "db_path": "./data/budget-sync.db",
+
+  // Obsidian vault (for export command only)
+  "vault_path": "/Users/you/Documents/Vaults/Personal",
+  "budget_dir": "Budget",
+
+  // Default provider for sync: "basiq", "csv", or "manual"
+  "provider": "basiq",
+
+  // Basiq configuration (required when provider is "basiq")
+  "basiq": {
+    // API key is resolved from BASIQ_API_KEY env var — never stored here
+    "user_id": "your-basiq-user-id",
+    "api_url": "https://au-api.basiq.io"
+  },
+
+  // Sync defaults
+  "sync": {
+    "default_range_days": 30,
+    "auto_snapshot": true
+  },
+
+  // Rent configuration
+  "rent": {
+    "solo_start_date": "2026-03-01",
+    "solo_weekly_amount": 650,
+    "shared_roommate_contribution": 450,
+    "landlord_patterns": ["IPY*GRACZYKTHOMPSON", "GRACZYKTHOMPSON"],
+    "debit_rent_patterns": ["Internet Withdrawal.*Rent"]
+  }
+}
