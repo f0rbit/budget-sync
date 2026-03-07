@@ -15,11 +15,6 @@ export const rentConfigSchema = z.object({
 	debit_rent_patterns: z.array(z.string()),
 });
 
-export const basiqConfigSchema = z.object({
-	user_id: z.string(),
-	api_url: z.string().url().default("https://au-api.basiq.io"),
-});
-
 export const syncConfigSchema = z.object({
 	default_range_days: z.number().int().positive().default(30),
 	auto_snapshot: z.boolean().default(true),
@@ -30,15 +25,13 @@ export const configSchema = z.object({
 	corpus_dir: z.string().default("./data/corpus"),
 	vault_path: z.string(),
 	budget_dir: z.string().default("Budget"),
-	provider: z.enum(["basiq", "csv", "manual"]).default("basiq"),
-	basiq: basiqConfigSchema.optional(),
+	provider: z.enum(["csv", "manual"]).default("manual"),
 	sync: syncConfigSchema.default({}),
 	rent: rentConfigSchema,
 });
 
 export type AppConfig = z.infer<typeof configSchema>;
 export type RentConfig = z.infer<typeof rentConfigSchema>;
-export type BasiqConfig = z.infer<typeof basiqConfigSchema>;
 export type SyncConfig = z.infer<typeof syncConfigSchema>;
 
 // === Config Loader ===
@@ -71,12 +64,4 @@ export function loadConfig(configPath?: string): Result<AppConfig, ConfigError> 
 	}
 
 	return ok(validation.data);
-}
-
-export function getBasiqApiKey(): Result<string, ConfigError> {
-	const key = process.env.BASIQ_API_KEY;
-	if (!key) {
-		return err(errors.configInvalid("BASIQ_API_KEY environment variable is not set"));
-	}
-	return ok(key);
 }

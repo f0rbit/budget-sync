@@ -11,15 +11,8 @@
   "vault_path": "/Users/you/Documents/Vaults/Personal",
   "budget_dir": "Budget",
 
-  // Default provider for sync: "basiq", "csv", or "manual"
-  "provider": "basiq",
-
-  // Basiq configuration (required when provider is "basiq")
-  "basiq": {
-    // API key is resolved from BASIQ_API_KEY env var — never stored here
-    "user_id": "your-basiq-user-id",
-    "api_url": "https://au-api.basiq.io"
-  },
+  // Default provider: "csv" or "manual"
+  "provider": "manual",
 
   // Sync defaults
   "sync": {

@@ -7,14 +7,12 @@ import { mappingsCommand } from "./commands/mappings.js";
 import { networthCommand } from "./commands/networth.js";
 import { snapshotCommand } from "./commands/snapshot.js";
 import { superCommand } from "./commands/super.js";
-import { syncCommand } from "./commands/sync.js";
 
 const program = new Command()
 	.name("budget-sync")
-	.description("Personal finance CLI — sync bank transactions, track net worth")
+	.description("Personal finance CLI — ingest bank documents, track net worth")
 	.version("0.1.0");
 
-program.addCommand(syncCommand);
 program.addCommand(accountsCommand);
 program.addCommand(mappingsCommand);
 program.addCommand(exportCommand);

@@ -45,13 +45,6 @@ export interface RawTransaction {
 	transactionDate: string; // YYYY-MM-DD
 	postDate: string; // YYYY-MM-DD
 	accountId: string;
-	enrichment?: EnrichmentData;
-}
-
-export interface EnrichmentData {
-	merchantName?: string;
-	category?: string;
-	location?: string;
 }
 
 // === Account Info (from provider) ===
@@ -126,7 +119,6 @@ export interface MerchantMappings {
  * BankProvider — abstracts bank transaction data access.
  *
  * Implementations:
- * - BasiqBankProvider: Production (Basiq CDR API)
  * - CsvBankProvider: Manual CSV import
  * - InMemoryBankProvider: Testing (in-memory arrays)
  */
@@ -136,7 +128,6 @@ export interface BankProvider {
 	getAccounts(): Promise<Result<AccountInfo[], ProviderError>>;
 	fetchTransactions(accountId: string, range: DateRange): Promise<Result<RawTransaction[], ProviderError>>;
 	getAccountBalances(): Promise<Result<AccountBalance[], ProviderError>>;
-	enrichTransaction?(description: string): Promise<Result<EnrichmentData, ProviderError>>;
 }
 
 // === Investment Provider (M3 — interface defined now for forward-compatibility) ===

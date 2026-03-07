@@ -25,26 +25,9 @@
 		},
 		"provider": {
 			"type": "string",
-			"enum": ["basiq", "csv", "manual"],
-			"description": "Default provider for sync command",
-			"default": "basiq"
-		},
-		"basiq": {
-			"type": "object",
-			"description": "Basiq CDR API configuration",
-			"properties": {
-				"user_id": {
-					"type": "string",
-					"description": "Basiq user ID"
-				},
-				"api_url": {
-					"type": "string",
-					"format": "uri",
-					"description": "Basiq API base URL",
-					"default": "https://au-api.basiq.io"
-				}
-			},
-			"required": ["user_id"]
+			"enum": ["csv", "manual"],
+			"description": "Default provider for ingest command",
+			"default": "manual"
 		},
 		"sync": {
 			"type": "object",

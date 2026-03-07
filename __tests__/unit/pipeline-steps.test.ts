@@ -131,28 +131,6 @@ describe("categorizePipeline", () => {
 			expect(result.transaction.item).toBe("Rent");
 		}
 	});
-
-	it("uses inline enrichment when no local mapping matches", async () => {
-		const tx = makeTransaction({
-			description: "UNKNOWN RESTAURANT PTY LTD",
-			direction: "debit",
-			enrichment: {
-				merchantName: "The Local Bistro",
-				category: "Restaurants",
-				location: "123 Main St",
-			},
-		});
-		const ctx = makeContext();
-
-		const result = await categorizePipeline(tx, ctx);
-
-		expect(result.type).toBe("categorized");
-		if (result.type === "categorized") {
-			expect(result.transaction.category).toBe("Eating Out");
-			expect(result.transaction.item).toBe("The Local Bistro");
-			expect(result.transaction.notes).toContain("123 Main St");
-		}
-	});
 });
 
 describe("categorizeAll", () => {

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { ACCOUNT_TYPES, CATEGORIES, CONTRIBUTION_TYPES, TRANSACTION_DIRECTIONS } from "../providers/types.js";
 
-// === Raw transaction snapshot (what Basiq/CSV returns) ===
+// === Raw transaction snapshot (what providers return) ===
 
 export const rawTransactionSchema = z.object({
 	id: z.string(),
@@ -11,13 +11,6 @@ export const rawTransactionSchema = z.object({
 	transactionDate: z.string(),
 	postDate: z.string(),
 	accountId: z.string(),
-	enrichment: z
-		.object({
-			merchantName: z.string().optional(),
-			category: z.string().optional(),
-			location: z.string().optional(),
-		})
-		.optional(),
 });
 
 export const rawTransactionsSnapshotSchema = z.object({

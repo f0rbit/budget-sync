@@ -1,7 +1,7 @@
 import { type Result, err, ok } from "@f0rbit/corpus";
 import type { ProviderError } from "../../errors.js";
 import { errors } from "../../errors.js";
-import type { AccountBalance, AccountInfo, BankProvider, DateRange, EnrichmentData, RawTransaction } from "../types.js";
+import type { AccountBalance, AccountInfo, BankProvider, DateRange, RawTransaction } from "../types.js";
 
 export class InMemoryBankProvider implements BankProvider {
 	readonly name = "in-memory";
@@ -9,7 +9,6 @@ export class InMemoryBankProvider implements BankProvider {
 	private _accounts: AccountInfo[] = [];
 	private _transactions: Map<string, RawTransaction[]> = new Map();
 	private _balances: AccountBalance[] = [];
-	private _enrichments: Map<string, EnrichmentData> = new Map();
 	private _authenticated = false;
 
 	failNextAuth = false;
@@ -30,10 +29,6 @@ export class InMemoryBankProvider implements BankProvider {
 
 	setBalances(balances: AccountBalance[]): void {
 		this._balances = balances;
-	}
-
-	addEnrichment(description: string, enrichment: EnrichmentData): void {
-		this._enrichments.set(description.toUpperCase(), enrichment);
 	}
 
 	// --- BankProvider interface ---
@@ -78,16 +73,5 @@ export class InMemoryBankProvider implements BankProvider {
 			return err(errors.apiError(500, "Simulated balance fetch failure"));
 		}
 		return ok([...this._balances]);
-	}
-
-	async enrichTransaction(description: string): Promise<Result<EnrichmentData, ProviderError>> {
-		if (!this._authenticated) {
-			return err(errors.authFailed("Not authenticated"));
-		}
-		const enrichment = this._enrichments.get(description.toUpperCase());
-		if (!enrichment) {
-			return err(errors.notFound("enrichment", `No enrichment for: ${description}`));
-		}
-		return ok(enrichment);
 	}
 }

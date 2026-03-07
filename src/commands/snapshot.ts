@@ -27,7 +27,7 @@ export const snapshotCommand = new Command("snapshot")
 		const config = configResult.value;
 
 		if (options.provider) {
-			const validProviders = ["basiq", "csv", "manual"] as const;
+			const validProviders = ["csv", "manual"] as const;
 			const matched = validProviders.find((p) => p === options.provider);
 			if (!matched) {
 				console.error(`Invalid provider: ${options.provider}. Must be one of: ${validProviders.join(", ")}`);

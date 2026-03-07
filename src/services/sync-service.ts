@@ -178,11 +178,9 @@ export async function syncTransactions(
 		return mappingsResult;
 	}
 
-	const enrich = provider.enrichTransaction;
 	const pipelineContext: PipelineContext = {
 		mappings: mappingsResult.value,
 		rentConfig: config.rent,
-		enrichTransaction: enrich ? (desc: string) => enrich(desc) : undefined,
 	};
 
 	const { categorized, excluded } = await categorizeAll(allRawTransactions, pipelineContext);
