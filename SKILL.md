@@ -10,7 +10,7 @@ Tracks: bank transactions, savings balances, super, investments, net worth.
 
 - Runtime: Bun
 - Database: SQLite + Drizzle ORM (`drizzle-orm/bun-sqlite`)
-- Data stores: `@f0rbit/corpus` stores (`raw-transactions`, `raw-accounts`, `raw-balances`, `sync-results`)
+- Data stores: `@f0rbit/corpus` stores (`raw-transactions`, `raw-accounts`, `raw-balances`, `sync-results`, `raw-contributions`)
 - Error handling: `@f0rbit/corpus` `Result<T, E>` types -- never throw
   - `pipe()` for chaining, `flat_map()` for fallible steps
   - `fetch_result()` for HTTP calls (never raw fetch)
@@ -39,16 +39,17 @@ budget-sync/
       import.ts                       -- `budget-sync import` command handler
       snapshot.ts                       -- `budget-sync snapshot` command handler
       networth.ts                       -- `budget-sync networth` command handler
+      super.ts                          -- `budget-sync super` command handler (balance, contributions, import)
     corpus/
       index.ts                        -- Barrel: re-exports AppCorpus, stores, snapshot types
       client.ts                       -- buildCorpus(), createCorpus(dataDir), createTestCorpus()
-      stores.ts                       -- define_store() calls for all 4 stores
+      stores.ts                       -- define_store() calls for all 5 stores
       schemas.ts                      -- Zod schemas for snapshot payloads
     db/
       schema.ts                       -- Drizzle table definitions (syncRuns, accounts, transactions, snapshots, holdings, contributions)
       client.ts                       -- createDb(path), createTestDb(), AppContext { db, corpus }
     providers/
-      types.ts                        -- BankProvider interface, value types (RawTransaction, CategorizedTransaction, etc.), enum arrays (CATEGORIES, ACCOUNT_TYPES, etc.), InvestmentProvider / SuperProvider (forward-compat)
+      types.ts                        -- BankProvider interface, SuperProvider interface, value types (RawTransaction, CategorizedTransaction, SuperBalance, SuperContribution, etc.), enum arrays (CATEGORIES, ACCOUNT_TYPES, CONTRIBUTION_TYPES, etc.), InvestmentProvider (forward-compat)
       index.ts                        -- createProvider(config) factory, re-exports all provider classes
       basiq/
         client.ts                     -- BasiqClient: authenticate (JWT), get<T>(), getAllPages(), Semaphore rate limiter
@@ -58,6 +59,9 @@ budget-sync/
         provider.ts                   -- CsvBankProvider: parses DD/MM/YYYY CSV, generates sha256 external IDs
       in-memory/
         provider.ts                   -- InMemoryBankProvider: arrays + fail flags for testing
+        super-provider.ts               -- InMemorySuperProvider for testing
+      manual-super/
+        provider.ts                   -- ManualSuperProvider: JSON file import
     pipeline/
       categorizer.ts                  -- categorizePipeline(tx, context), categorizeAll(txs, context)
       filter.ts                       -- filterTransaction(tx, exclusions) -> Result<RawTransaction, ExcludedTransaction>
@@ -71,10 +75,14 @@ budget-sync/
       export-service.ts               -- exportToObsidian(db, vaultPath, budgetDir, options)
       snapshot-service.ts               -- upsertSnapshot(), getLatestSnapshots(), getSnapshotHistory()
       networth-service.ts               -- getCurrentNetWorth(), getNetWorthHistory() with carry-forward
+      contribution-service.ts           -- insertContributions(), getContributions(), getContributionSummary()
+      super-sync-service.ts             -- syncSuper() import orchestrator
   __tests__/
     integration/                      -- Integration tests (in-memory DB + corpus)
       snapshot.test.ts                  -- Snapshot service + sync integration (10 scenarios)
-      networth.test.ts                  -- Net worth calculation tests (8 scenarios)
+      networth.test.ts                  -- Net worth calculation tests (8 scenarios, includes super)
+      super-import.test.ts              -- Super import integration tests (11 scenarios)
+      super-networth.test.ts            -- Super net worth tests (5 scenarios)
     unit/                             -- Unit tests (pure functions)
   drizzle/                            -- Generated migrations (never hand-edit)
   config.example.jsonc                -- Example config (committed)
@@ -103,6 +111,7 @@ Defined in `src/corpus/stores.ts` using `define_store()` + `json_codec()`:
 | `raw-accounts` | `RawAccountsSnapshot` | `rawAccountsSnapshotSchema` | Raw account info per fetch |
 | `raw-balances` | `RawBalancesSnapshot` | `rawBalancesSnapshotSchema` | Raw balance snapshots per fetch |
 | `sync-results` | `SyncResultSnapshot` | `syncResultSnapshotSchema` | Categorized pipeline output with lineage |
+| `raw-contributions` | `RawContributionsSnapshot` | `rawContributionsSnapshotSchema` | Raw super contribution data per import |
 
 ### Lineage
 
@@ -125,7 +134,7 @@ This enables deterministic replay: re-run categorization from stored corpus snap
 - Production: `create_file_backend({ base_path: config.corpus_dir })` (from `@f0rbit/corpus/file`)
 - Testing: `create_memory_backend()` -- fast, isolated, no filesystem
 
-Both go through `buildCorpus(backend)` which attaches all 4 stores via `.with_store()`.
+Both go through `buildCorpus(backend)` which attaches all 5 stores via `.with_store()`.
 
 ## Key Patterns
 
@@ -171,7 +180,26 @@ Implementations:
 
 Factory: `createProvider(config, options?) -> Result<BankProvider, ConfigError>` in `src/providers/index.ts` switches on `config.provider` (`"basiq"` | `"csv"` | `"manual"`).
 
-Forward-compatible interfaces also defined: `InvestmentProvider` (M3), `SuperProvider` (M2).
+`SuperProvider` is now implemented (M2 complete). Forward-compatible interface: `InvestmentProvider` (M3).
+
+### Super Provider
+
+`SuperProvider` interface in `src/providers/types.ts`:
+
+```ts
+interface SuperProvider {
+  readonly name: string;
+  importBalances(): Promise<Result<SuperBalance[], ProviderError>>;
+  importContributions(range: DateRange): Promise<Result<SuperContribution[], ProviderError>>;
+}
+```
+
+Implementations:
+
+| Class | Module | Purpose |
+|-------|--------|---------|
+| `ManualSuperProvider` | `src/providers/manual-super/provider.ts` | JSON file import (validates with Zod) |
+| `InMemorySuperProvider` | `src/providers/in-memory/super-provider.ts` | Testing: arrays + fail flags |
 
 ### Transaction Pipeline
 
@@ -210,7 +238,7 @@ Batch function: `categorizeAll(transactions, context)` returns `{ categorized: C
 
 ### Database
 
-- Schema: `src/db/schema.ts` -- 6 tables: `syncRuns`, `accounts`, `transactions`, `snapshots`, `holdings`, `contributions`
+- Schema: `src/db/schema.ts` -- 6 tables: `syncRuns`, `accounts`, `transactions`, `snapshots`, `holdings`, `contributions` (id, accountId, date, type, amount, description)
 - Client: `src/db/client.ts` -- `createDb(path)` (WAL mode + foreign keys), `createTestDb()` (in-memory)
 - `AppContext = { db: AppDatabase, corpus: AppCorpus }` -- passed to all service functions
 - `AppDatabase = ReturnType<typeof createDb>` (Drizzle instance with schema)
@@ -292,6 +320,13 @@ CONTRIBUTION_TYPES = ["employer", "salary_sacrifice", "voluntary", "fhss", "gove
 3. Register in `buildCorpus()` in `src/corpus/client.ts` with `.with_store()`
 4. Export from `src/corpus/index.ts`
 
+### Importing super contributions
+
+1. Create a JSON file with `balances` (array of `{account_name, balance, as_of}`) and `contributions` (array of `{date, type, amount, description?}`)
+2. Run `bun run dev -- super import <file.json>` with `--account-name` and `--account-type super`
+3. ManualSuperProvider validates JSON with Zod, filters by date range
+4. syncSuper orchestrates: upsert account → import balances → import contributions → corpus snapshot
+
 ### Adding a new DB table
 
 1. Define table in `src/db/schema.ts` using `sqliteTable()`
@@ -317,6 +352,9 @@ bun run dev -- mappings
 bun run dev -- snapshot
 bun run dev -- networth
 bun run dev -- networth --history --format csv
+bun run dev -- super balance
+bun run dev -- super contributions
+bun run dev -- super import data.json --account-name "My Super Fund"
 ```
 
 ## Gotchas
@@ -351,3 +389,17 @@ bun run dev -- networth --history --format csv
 - Carry-forward: net worth history uses last-known balance for accounts without a snapshot on a given date
 - Service functions receive `AppDatabase`, not `AppContext` (they don't need corpus access)
 - 82 tests passing across 10 files after M1
+
+## M2: Superannuation Integration
+
+- `bun run dev -- super balance` — show current super balance from snapshots
+- `bun run dev -- super contributions` — list contribution history with summary
+- `bun run dev -- super import <file>` — import from JSON file
+- ManualSuperProvider validates JSON input with Zod schema
+- Dedicated `raw-contributions` corpus store for imported data
+- No `sync_runs` for super imports (lightweight flow)
+- Contribution dedup: check-before-insert on (accountId, date, type, amount) — no unique constraint
+- `computeNetWorth` includes super balances; `NetWorthBreakdown.components` has `super` field
+- `super` keyword is valid as a TS property name in object literals and interfaces
+- Services use `computeNetWorth()` which sums: savings + transaction - credit + super
+- 98 tests passing across 12 files after M2
