@@ -1,0 +1,69 @@
+{
+	"$schema": "./merchant-mappings.schema.json",
+
+	"mappings": [
+		// --- Alcohol ---
+		{ "match": "FIREFLY BRISBANE", "item": "Firefly Brisbane", "category": "Alcohol" },
+		{ "match": "DAN MURPHY", "item": "Dan Murphy's", "category": "Alcohol" },
+		{ "match": "BWS", "item": "BWS", "category": "Alcohol" },
+		{ "match": "MALT TRADERS", "item": "Malt Traders", "category": "Alcohol" },
+
+		// --- Eating Out ---
+		{ "match": "MISO HUNGRY", "item": "Miso Hungry", "category": "Eating Out" },
+		{ "match": "PBH CULTURE", "item": "PBH Culture", "category": "Eating Out" },
+		{ "match": "GZ BLUE", "item": "GZ Blue", "category": "Eating Out" },
+		{ "match": "MCDONALDS", "item": "McDonald's", "category": "Eating Out" },
+		{ "match": "SUBWAY", "item": "Subway", "category": "Eating Out" },
+		{ "match": "KFC", "item": "KFC", "category": "Eating Out" },
+		{ "match": "LS ANITA GELATO", "item": "LS Anita Gelato", "category": "Eating Out" },
+		{ "match": "CLEMENTINE", "item": "Clementine's", "category": "Eating Out" },
+
+		// --- Woolworths ---
+		{ "match": "WOOLWORTHS/", "item": "Woolworths", "category": "Woolworths", "extractLocation": true },
+
+		// --- Subscriptions ---
+		{ "match": "ADOBE SYDNEY", "item": "Adobe", "category": "Subscriptions" },
+		{ "match": "APPLE.COM/BILL", "item": "Apple", "category": "Subscriptions" },
+		{ "match": "UBER *ONE MEMBERSHIP", "item": "Uber One", "category": "Subscriptions" },
+		{ "match": "EVERYDAY EXTRA", "item": "Woolworths Everyday Extra", "category": "Subscriptions" },
+		{ "match": "AMZNPRIMEA", "item": "Amazon Prime", "category": "Subscriptions" },
+		{ "match": "AMAZON WEB SERVICES", "item": "AWS", "category": "Subscriptions" },
+
+		// --- Transport ---
+		{ "match": "ZLR*", "item": "Go Card", "category": "Transport" },
+		{ "match": "MYKI", "item": "Myki", "category": "Transport" },
+		{ "match": "TRANSLINK", "item": "Translink Go Card", "category": "Transport" },
+		{ "match": "NEURONAU", "item": "E-scooter", "category": "Transport" },
+
+		// --- Bills ---
+		{ "match": "EZI*GIGACOMM", "item": "Gigacomm Internet", "category": "Bills" },
+		{ "match": "WOOLIESMOBILE", "item": "Woolies Mobile", "category": "Bills" },
+
+		// --- Health ---
+		{ "match": "CHEMIST WAREHOUSE", "item": "Chemist Warehouse", "category": "Health" },
+		{ "match": "GU HEALTH", "item": "GU Health", "category": "Health" },
+
+		// --- Shopping ---
+		{ "match": "JB HI FI", "item": "JB Hi-Fi", "category": "Shopping" },
+		{ "match": "DIGIDIRECT", "item": "Digidirect", "category": "Shopping" },
+		{ "match": "CK UNDERWEAR", "item": "CK Underwear", "category": "Shopping" },
+		{ "match": "DAVID JONES", "item": "David Jones", "category": "Shopping" },
+		{ "match": "WHITE CLOSET", "item": "White Closet", "category": "Shopping" },
+		{ "match": "OFFICEWORKS", "item": "Officeworks", "category": "Shopping" },
+
+		// --- Entertainment ---
+		{ "match": "QPAC", "item": "QPAC", "category": "Entertainment" },
+		{ "match": "FORUM MELBOURNE", "item": "Forum Melbourne", "category": "Entertainment" },
+		{ "match": "SEA LIFE", "item": "Sea Life", "category": "Entertainment" },
+		{ "match": "NGV", "item": "NGV", "category": "Entertainment" },
+		{ "match": "AUST CNT FOR CONT AR", "item": "ACCA", "category": "Entertainment" }
+	],
+
+	"exclusions": [
+		{ "match": "^To 460184", "reason": "Credit card payment" },
+		{ "match": "^To 131007", "reason": "Savings transfer" },
+		{ "match": "^To 900021", "reason": "Savings transfer" },
+		{ "match": "BETASHARES DIRECT", "reason": "Investment purchase" },
+		{ "match": "RENT MR MAXWELL", "reason": "Roommate rent deposit" }
+	]
+}
