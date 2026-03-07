@@ -34,23 +34,24 @@ function printBreakdownCsv(breakdown: NetWorthBreakdown): void {
 
 function printHistoryTable(history: NetWorthHistoryEntry[]): void {
 	console.log(
-		`${"Date".padEnd(13)}${" Net Worth".padStart(12)}${"Savings".padStart(14)}${"Transaction".padStart(14)}${"Credit".padStart(14)}`,
+		`${"Date".padEnd(13)}${" Net Worth".padStart(12)}${"Savings".padStart(14)}${"Super".padStart(14)}${"Transaction".padStart(14)}${"Credit".padStart(14)}`,
 	);
 	for (const entry of history) {
 		const date = entry.date.padEnd(13);
 		const nw = formatCurrency(entry.netWorth).padStart(12);
 		const sav = formatCurrency(entry.savings).padStart(14);
+		const sup = formatCurrency(entry.super).padStart(14);
 		const txn = formatCurrency(entry.transaction).padStart(14);
 		const cred = formatCurrency(entry.credit).padStart(14);
-		console.log(`${date}${nw}${sav}${txn}${cred}`);
+		console.log(`${date}${nw}${sav}${sup}${txn}${cred}`);
 	}
 }
 
 function printHistoryCsv(history: NetWorthHistoryEntry[]): void {
-	console.log("date,net_worth,savings,transaction,credit");
+	console.log("date,net_worth,savings,super,transaction,credit");
 	for (const entry of history) {
 		console.log(
-			`${entry.date},${entry.netWorth.toFixed(2)},${entry.savings.toFixed(2)},${entry.transaction.toFixed(2)},${entry.credit.toFixed(2)}`,
+			`${entry.date},${entry.netWorth.toFixed(2)},${entry.savings.toFixed(2)},${entry.super.toFixed(2)},${entry.transaction.toFixed(2)},${entry.credit.toFixed(2)}`,
 		);
 	}
 }
