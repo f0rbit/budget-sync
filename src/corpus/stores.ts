@@ -2,12 +2,14 @@ import { define_store, json_codec } from "@f0rbit/corpus";
 import {
 	rawAccountsSnapshotSchema,
 	rawBalancesSnapshotSchema,
+	rawContributionsSnapshotSchema,
 	rawTransactionsSnapshotSchema,
 	syncResultSnapshotSchema,
 } from "./schemas.js";
 import type {
 	RawAccountsSnapshot,
 	RawBalancesSnapshot,
+	RawContributionsSnapshot,
 	RawTransactionsSnapshot,
 	SyncResultSnapshot,
 } from "./schemas.js";
@@ -34,4 +36,10 @@ export const syncResultsStore = define_store<"sync-results", SyncResultSnapshot>
 	"sync-results",
 	json_codec(syncResultSnapshotSchema),
 	{ description: "Categorized sync results (pipeline output)" },
+);
+
+export const rawContributionsStore = define_store<"raw-contributions", RawContributionsSnapshot>(
+	"raw-contributions",
+	json_codec(rawContributionsSnapshotSchema),
+	{ description: "Raw super balance + contribution data from manual import or API" },
 );

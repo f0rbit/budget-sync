@@ -1,6 +1,12 @@
 import { create_corpus, create_memory_backend } from "@f0rbit/corpus";
 import { create_file_backend } from "@f0rbit/corpus/file";
-import { rawAccountsStore, rawBalancesStore, rawTransactionsStore, syncResultsStore } from "./stores.js";
+import {
+	rawAccountsStore,
+	rawBalancesStore,
+	rawContributionsStore,
+	rawTransactionsStore,
+	syncResultsStore,
+} from "./stores.js";
 
 function buildCorpus(backend: ReturnType<typeof create_memory_backend>) {
 	return create_corpus()
@@ -9,6 +15,7 @@ function buildCorpus(backend: ReturnType<typeof create_memory_backend>) {
 		.with_store(rawAccountsStore)
 		.with_store(rawBalancesStore)
 		.with_store(syncResultsStore)
+		.with_store(rawContributionsStore)
 		.build();
 }
 

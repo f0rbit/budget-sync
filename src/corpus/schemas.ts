@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ACCOUNT_TYPES, CATEGORIES, TRANSACTION_DIRECTIONS } from "../providers/types.js";
+import { ACCOUNT_TYPES, CATEGORIES, CONTRIBUTION_TYPES, TRANSACTION_DIRECTIONS } from "../providers/types.js";
 
 // === Raw transaction snapshot (what Basiq/CSV returns) ===
 
@@ -109,3 +109,26 @@ export const syncResultSnapshotSchema = z.object({
 });
 
 export type SyncResultSnapshot = z.infer<typeof syncResultSnapshotSchema>;
+
+// === Raw contributions snapshot (from super import/API) ===
+
+export const rawContributionSchema = z.object({
+	id: z.string(),
+	date: z.string(),
+	type: z.enum(CONTRIBUTION_TYPES),
+	amount: z.number(),
+	description: z.string().optional(),
+});
+
+export const rawContributionsSnapshotSchema = z.object({
+	accountId: z.string(),
+	provider: z.string(),
+	fetchedAt: z.string(),
+	balance: z.object({
+		amount: z.number(),
+		asOf: z.string(),
+	}),
+	contributions: z.array(rawContributionSchema),
+});
+
+export type RawContributionsSnapshot = z.infer<typeof rawContributionsSnapshotSchema>;

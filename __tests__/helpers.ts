@@ -3,7 +3,15 @@ import type { AppConfig } from "../src/config.js";
 import { createTestCorpus } from "../src/corpus/client.js";
 import { type AppContext, createTestDb } from "../src/db/client.js";
 import { InMemoryBankProvider } from "../src/providers/in-memory/provider.js";
-import type { AccountBalance, AccountInfo, RawTransaction } from "../src/providers/types.js";
+import { InMemorySuperProvider } from "../src/providers/in-memory/super-provider.js";
+import type {
+	AccountBalance,
+	AccountInfo,
+	ContributionType,
+	RawTransaction,
+	SuperBalance,
+	SuperContribution,
+} from "../src/providers/types.js";
 
 export function createTestContext(): AppContext {
 	return {
@@ -85,4 +93,34 @@ export function makeBalance(overrides?: Partial<AccountBalance>): AccountBalance
 		asOf: "2026-03-01",
 		...overrides,
 	};
+}
+
+export function makeSuperBalance(overrides?: Partial<SuperBalance>): SuperBalance {
+	return {
+		accountId: overrides?.accountId ?? "super-account",
+		balance: 85000.0,
+		asOf: "2026-03-01",
+		...overrides,
+	};
+}
+
+export function makeContribution(overrides?: Partial<SuperContribution>): SuperContribution {
+	return {
+		id: overrides?.id ?? createId(),
+		date: "2026-03-01",
+		type: "employer" as ContributionType,
+		amount: 1200.0,
+		description: "Monthly employer contribution",
+		...overrides,
+	};
+}
+
+export function createTestSuperProvider(options?: {
+	balance?: SuperBalance;
+	contributions?: SuperContribution[];
+}): InMemorySuperProvider {
+	const provider = new InMemorySuperProvider();
+	if (options?.balance) provider.setBalance(options.balance);
+	if (options?.contributions) provider.addContributions(...options.contributions);
+	return provider;
 }
