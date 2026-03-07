@@ -46,6 +46,23 @@
 				}
 			}
 		},
+		"anthropic": {
+			"type": "object",
+			"description": "Anthropic AI configuration for document parsing",
+			"properties": {
+				"model": {
+					"type": "string",
+					"description": "AI model to use for document parsing",
+					"default": "claude-sonnet-4-20250514"
+				},
+				"max_tokens": {
+					"type": "integer",
+					"description": "Maximum tokens for AI response",
+					"default": 8192,
+					"minimum": 1
+				}
+			}
+		},
 		"rent": {
 			"type": "object",
 			"description": "Rent calculation configuration",

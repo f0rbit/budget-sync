@@ -195,3 +195,35 @@ export interface SyncSummary {
 	duration: number; // milliseconds
 	errors: string[];
 }
+
+// === Document Parser (AI-powered document ingestion) ===
+
+export interface ParsedDocument {
+	/** Transactions extracted from the document */
+	transactions: RawTransaction[];
+	/** Account info inferred from the document (if identifiable) */
+	account?: {
+		name?: string;
+		institution?: string;
+		type?: AccountType;
+	};
+	/** Confidence scores or notes from the AI about ambiguous entries */
+	notes?: string[];
+	/** Raw AI response for debugging/auditing */
+	rawResponse?: string;
+}
+
+export interface DocumentParser {
+	readonly name: string;
+	/**
+	 * Parse a document into transactions.
+	 * @param content - Document content (base64 for binary, raw text for CSV/text)
+	 * @param mimeType - MIME type of the document
+	 * @param accountHint - Optional user-provided account identification
+	 */
+	parse(
+		content: string,
+		mimeType: string,
+		accountHint?: { accountName?: string; accountType?: AccountType },
+	): Promise<Result<ParsedDocument, ProviderError>>;
+}

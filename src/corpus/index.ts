@@ -5,6 +5,9 @@ export {
 	rawContributionsStore,
 	rawTransactionsStore,
 	syncResultsStore,
+	rawDocumentsStore,
+	aiParseResultsStore,
+	computationSnapshotsStore,
 } from "./stores.js";
 export type {
 	RawAccountsSnapshot,
@@ -12,4 +15,7 @@ export type {
 	RawContributionsSnapshot,
 	RawTransactionsSnapshot,
 	SyncResultSnapshot,
+	RawDocumentSnapshot,
+	AiParseResultSnapshot,
+	ComputationSnapshot,
 } from "./schemas.js";

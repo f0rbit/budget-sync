@@ -70,6 +70,10 @@ export function makeConfig(overrides?: Partial<AppConfig>): AppConfig {
 			default_range_days: 30,
 			auto_snapshot: true,
 		},
+		anthropic: {
+			model: "claude-sonnet-4-20250514",
+			max_tokens: 8192,
+		},
 		rent: makeRentConfig(),
 		...overrides,
 	};

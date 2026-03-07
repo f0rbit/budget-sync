@@ -14,6 +14,7 @@
 		"db:studio": "bunx drizzle-kit studio"
 	},
 	"dependencies": {
+		"@anthropic-ai/sdk": "^0.78.0",
 		"@f0rbit/corpus": "latest",
 		"@paralleldrive/cuid2": "^2.2.2",
 		"commander": "^12.1.0",

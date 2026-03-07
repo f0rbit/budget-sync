@@ -20,6 +20,12 @@
     "auto_snapshot": true
   },
 
+  // Anthropic AI configuration (for document parsing)
+  "anthropic": {
+    "model": "claude-sonnet-4-20250514",
+    "max_tokens": 8192
+  },
+
   // Rent configuration
   "rent": {
     "solo_start_date": "2026-03-01",

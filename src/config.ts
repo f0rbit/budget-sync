@@ -20,6 +20,11 @@ export const syncConfigSchema = z.object({
 	auto_snapshot: z.boolean().default(true),
 });
 
+export const anthropicConfigSchema = z.object({
+	model: z.string().default("claude-sonnet-4-20250514"),
+	max_tokens: z.number().int().positive().default(8192),
+});
+
 export const configSchema = z.object({
 	db_path: z.string().default("./data/budget-sync.db"),
 	corpus_dir: z.string().default("./data/corpus"),
@@ -27,12 +32,14 @@ export const configSchema = z.object({
 	budget_dir: z.string().default("Budget"),
 	provider: z.enum(["csv", "manual"]).default("manual"),
 	sync: syncConfigSchema.default({}),
+	anthropic: anthropicConfigSchema.default({}),
 	rent: rentConfigSchema,
 });
 
 export type AppConfig = z.infer<typeof configSchema>;
 export type RentConfig = z.infer<typeof rentConfigSchema>;
 export type SyncConfig = z.infer<typeof syncConfigSchema>;
+export type AnthropicConfig = z.infer<typeof anthropicConfigSchema>;
 
 // === Config Loader ===
 
@@ -64,4 +71,12 @@ export function loadConfig(configPath?: string): Result<AppConfig, ConfigError> 
 	}
 
 	return ok(validation.data);
+}
+
+export function getAnthropicApiKey(): Result<string, ConfigError> {
+	const key = process.env.ANTHROPIC_API_KEY;
+	if (!key) {
+		return err(errors.configInvalid("ANTHROPIC_API_KEY environment variable is not set"));
+	}
+	return ok(key);
 }

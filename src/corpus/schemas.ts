@@ -125,3 +125,86 @@ export const rawContributionsSnapshotSchema = z.object({
 });
 
 export type RawContributionsSnapshot = z.infer<typeof rawContributionsSnapshotSchema>;
+
+// === Raw document snapshot (full document content for ingestion) ===
+
+export const rawDocumentSnapshotSchema = z.object({
+	/** Original filename */
+	filename: z.string(),
+	/** MIME type of the document */
+	mimeType: z.string(),
+	/** SHA-256 hash of the original file content */
+	contentHash: z.string(),
+	/** File size in bytes */
+	sizeBytes: z.number().int().nonnegative(),
+	/** When the document was ingested */
+	ingestedAt: z.string(),
+	/** Full document content — base64 for binary, raw text for text formats */
+	content: z.string(),
+	/** Whether content is base64-encoded (true for PDFs, images) or raw text (CSVs, text) */
+	isBase64: z.boolean(),
+});
+
+export type RawDocumentSnapshot = z.infer<typeof rawDocumentSnapshotSchema>;
+
+// === AI parse result snapshot (what the AI extracted from the document) ===
+
+export const aiParseResultSnapshotSchema = z.object({
+	/** Which parser produced this result */
+	parser: z.string(),
+	/** AI model used (e.g., "claude-sonnet-4-20250514") */
+	model: z.string().optional(),
+	/** When parsing was performed */
+	parsedAt: z.string(),
+	/** Extracted transactions */
+	transactions: z.array(rawTransactionSchema),
+	/** Account info inferred from the document */
+	account: z
+		.object({
+			name: z.string().optional(),
+			institution: z.string().optional(),
+			type: z.enum(ACCOUNT_TYPES).optional(),
+		})
+		.optional(),
+	/** Notes about ambiguities or issues */
+	notes: z.array(z.string()).optional(),
+	/** Raw AI response for auditing */
+	rawResponse: z.string().optional(),
+});
+
+export type AiParseResultSnapshot = z.infer<typeof aiParseResultSnapshotSchema>;
+
+// === Computation snapshot (materialized state after ingestion) ===
+
+export const computationSnapshotSchema = z.object({
+	/** ID of the ingest/sync run that triggered this computation */
+	ingestRunId: z.string(),
+	/** When computation was performed */
+	computedAt: z.string(),
+	/** Net worth breakdown at time of computation */
+	netWorth: z.object({
+		total: z.number(),
+		transaction: z.number(),
+		savings: z.number(),
+		credit: z.number(),
+		super: z.number(),
+	}),
+	/** Per-account balances at time of computation */
+	accountBalances: z.array(
+		z.object({
+			accountId: z.string(),
+			accountName: z.string(),
+			accountType: z.enum(ACCOUNT_TYPES),
+			balance: z.number(),
+		}),
+	),
+	/** Summary of what was materialized */
+	materialization: z.object({
+		transactionsCreated: z.number(),
+		transactionsExcluded: z.number(),
+		transactionsSkipped: z.number(),
+		snapshotsUpserted: z.number(),
+	}),
+});
+
+export type ComputationSnapshot = z.infer<typeof computationSnapshotSchema>;

@@ -1,9 +1,12 @@
 import { create_corpus, create_memory_backend } from "@f0rbit/corpus";
 import { create_file_backend } from "@f0rbit/corpus/file";
 import {
+	aiParseResultsStore,
+	computationSnapshotsStore,
 	rawAccountsStore,
 	rawBalancesStore,
 	rawContributionsStore,
+	rawDocumentsStore,
 	rawTransactionsStore,
 	syncResultsStore,
 } from "./stores.js";
@@ -16,6 +19,9 @@ function buildCorpus(backend: ReturnType<typeof create_memory_backend>) {
 		.with_store(rawBalancesStore)
 		.with_store(syncResultsStore)
 		.with_store(rawContributionsStore)
+		.with_store(rawDocumentsStore)
+		.with_store(aiParseResultsStore)
+		.with_store(computationSnapshotsStore)
 		.build();
 }
 
