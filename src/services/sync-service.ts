@@ -3,6 +3,7 @@ import { createId } from "@paralleldrive/cuid2";
 import { eq } from "drizzle-orm";
 import type { AppConfig } from "../config.js";
 import type {
+	AiCategorizationResultSnapshot,
 	RawAccountsSnapshot,
 	RawBalancesSnapshot,
 	RawTransactionsSnapshot,
@@ -13,8 +14,15 @@ import { syncRuns } from "../db/schema.js";
 import type { DbError, PipelineError, ProviderError } from "../errors.js";
 import { errors } from "../errors.js";
 import { type PipelineContext, categorizeAll } from "../pipeline/categorizer.js";
-import { loadMappings } from "../pipeline/local-mappings.js";
-import type { BankProvider, DateRange, MerchantMappings, RawTransaction, SyncSummary } from "../providers/types.js";
+import { appendMappings, loadMappings } from "../pipeline/local-mappings.js";
+import type {
+	AiCategorizer,
+	BankProvider,
+	DateRange,
+	MerchantMappings,
+	RawTransaction,
+	SyncSummary,
+} from "../providers/types.js";
 import { findAccountByExternalId, listAccounts, upsertAccount } from "./account-service.js";
 import { materializeBalances } from "./snapshot-service.js";
 import { createTransaction } from "./transaction-service.js";
@@ -28,6 +36,7 @@ export interface SyncOptions {
 	accountId?: string;
 	verbose?: boolean;
 	mappings?: MerchantMappings;
+	aiCategorizer?: AiCategorizer;
 }
 
 type SyncError = ProviderError | DbError | PipelineError;
@@ -177,9 +186,34 @@ export async function syncTransactions(
 	const pipelineContext: PipelineContext = {
 		mappings,
 		rentConfig: config.rent,
+		aiCategorizer: options?.aiCategorizer,
 	};
 
-	const { categorized, excluded } = await categorizeAll(allRawTransactions, pipelineContext);
+	const { categorized, excluded, aiCategorizationResult } = await categorizeAll(allRawTransactions, pipelineContext);
+
+	// Step 6.5: Store AI categorization result in corpus + auto-write mappings
+	if (aiCategorizationResult) {
+		const catSnapshot: AiCategorizationResultSnapshot = {
+			categorizer: options?.aiCategorizer?.name ?? "unknown",
+			categorizedAt: now,
+			request: {
+				uncategorizedCount: aiCategorizationResult.categorizations.length,
+				contextTransactionCount: 0,
+			},
+			result: {
+				categorizations: aiCategorizationResult.categorizations,
+				suggestedMappings: aiCategorizationResult.suggestedMappings,
+			},
+			rawResponse: aiCategorizationResult.rawResponse,
+		};
+		await ctx.corpus.stores["ai-categorization-results"].put(catSnapshot, {
+			tags: [`sync-run:${syncRunId}`, `provider:${provider.name}`],
+		});
+
+		if (!options?.dryRun && aiCategorizationResult.suggestedMappings.length > 0) {
+			appendMappings(aiCategorizationResult.suggestedMappings);
+		}
+	}
 
 	// Step 7: Snapshot sync results to corpus with parent lineage
 	const syncResultSnapshot: SyncResultSnapshot = {

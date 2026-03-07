@@ -1,10 +1,16 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { type Result, err, ok, try_catch } from "@f0rbit/corpus";
-import { type ParseError, parse as parseJsonc } from "jsonc-parser";
+import { type ParseError, applyEdits, modify, parse as parseJsonc } from "jsonc-parser";
 import type { PipelineError } from "../errors.js";
 import { errors } from "../errors.js";
-import type { CategorizedTransaction, MerchantMapping, MerchantMappings, RawTransaction } from "../providers/types.js";
+import type {
+	CategorizedTransaction,
+	Category,
+	MerchantMapping,
+	MerchantMappings,
+	RawTransaction,
+} from "../providers/types.js";
 
 const DEFAULT_MAPPINGS_PATH = "merchant-mappings.jsonc";
 
@@ -78,4 +84,46 @@ export function applyMapping(tx: RawTransaction, mapping: MerchantMapping): Cate
 		excluded: false,
 		accountId: tx.accountId,
 	};
+}
+
+export function appendMappings(
+	newMappings: Array<{ match: string; item: string; category: Category }>,
+	mappingsPath?: string,
+): Result<number, PipelineError> {
+	if (newMappings.length === 0) return ok(0);
+
+	const resolvedPath = resolve(mappingsPath ?? DEFAULT_MAPPINGS_PATH);
+
+	const readResult = try_catch(
+		() => readFileSync(resolvedPath, "utf-8"),
+		(e) => errors.mappingLoadFailed(`Failed to read mappings file: ${e}`),
+	);
+	if (!readResult.ok) return readResult;
+
+	let content = readResult.value;
+	let added = 0;
+
+	// Use jsonc-parser modify() to append each mapping to the "mappings" array
+	for (const mapping of newMappings) {
+		// Check if this match pattern already exists
+		const existing = content.toUpperCase().includes(`"MATCH": "${mapping.match.toUpperCase()}"`);
+		if (existing) continue;
+
+		const edits = modify(content, ["mappings", -1], mapping, {
+			isArrayInsertion: true,
+			formattingOptions: { tabSize: 1, insertSpaces: false },
+		});
+		content = applyEdits(content, edits);
+		added++;
+	}
+
+	if (added === 0) return ok(0);
+
+	const writeResult = try_catch(
+		() => writeFileSync(resolvedPath, content, "utf-8"),
+		(e) => errors.mappingLoadFailed(`Failed to write mappings file: ${e}`),
+	);
+	if (!writeResult.ok) return writeResult;
+
+	return ok(added);
 }

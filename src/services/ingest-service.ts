@@ -6,6 +6,7 @@ import { createId } from "@paralleldrive/cuid2";
 import { eq } from "drizzle-orm";
 import type { AppConfig } from "../config.js";
 import type {
+	AiCategorizationResultSnapshot,
 	AiParseResultSnapshot,
 	ComputationSnapshot,
 	RawDocumentSnapshot,
@@ -16,8 +17,15 @@ import { syncRuns } from "../db/schema.js";
 import type { DbError, PipelineError, ProviderError } from "../errors.js";
 import { errors } from "../errors.js";
 import { type PipelineContext, categorizeAll } from "../pipeline/categorizer.js";
-import { loadMappings } from "../pipeline/local-mappings.js";
-import type { AccountType, DocumentParser, MerchantMappings, RawTransaction, SyncStatus } from "../providers/types.js";
+import { appendMappings, loadMappings } from "../pipeline/local-mappings.js";
+import type {
+	AccountType,
+	AiCategorizer,
+	DocumentParser,
+	MerchantMappings,
+	RawTransaction,
+	SyncStatus,
+} from "../providers/types.js";
 import { findAccountByExternalId, upsertAccount } from "./account-service.js";
 import { getCurrentNetWorth } from "./networth-service.js";
 import { createTransaction } from "./transaction-service.js";
@@ -33,6 +41,7 @@ export interface IngestOptions {
 	dryRun?: boolean;
 	verbose?: boolean;
 	mappings?: MerchantMappings;
+	aiCategorizer?: AiCategorizer;
 }
 
 export interface IngestSummary {
@@ -248,9 +257,38 @@ export async function ingestDocument(
 	const pipelineContext: PipelineContext = {
 		mappings,
 		rentConfig: config.rent,
+		aiCategorizer: options?.aiCategorizer,
 	};
 
-	const { categorized, excluded } = await categorizeAll(transactions, pipelineContext);
+	const { categorized, excluded, aiCategorizationResult } = await categorizeAll(transactions, pipelineContext);
+
+	// Step 10.5: Store AI categorization result in corpus + auto-write mappings
+	if (aiCategorizationResult) {
+		const catSnapshot: AiCategorizationResultSnapshot = {
+			categorizer: options?.aiCategorizer?.name ?? "unknown",
+			categorizedAt: now,
+			request: {
+				uncategorizedCount: aiCategorizationResult.categorizations.length,
+				contextTransactionCount: 0,
+			},
+			result: {
+				categorizations: aiCategorizationResult.categorizations,
+				suggestedMappings: aiCategorizationResult.suggestedMappings,
+			},
+			rawResponse: aiCategorizationResult.rawResponse,
+		};
+		await ctx.corpus.stores["ai-categorization-results"].put(catSnapshot, {
+			tags: [`sync-run:${syncRunId}`, `parser:${parser.name}`],
+		});
+
+		// Auto-write suggested mappings to merchant-mappings.jsonc
+		if (!options?.dryRun && aiCategorizationResult.suggestedMappings.length > 0) {
+			const writeResult = appendMappings(aiCategorizationResult.suggestedMappings);
+			if (writeResult.ok && writeResult.value > 0) {
+				summaryNotes.push(`${writeResult.value} new merchant mapping(s) added`);
+			}
+		}
+	}
 
 	// Step 11: Store sync results in corpus ["sync-results"]
 	const syncResultSnapshot: SyncResultSnapshot = {

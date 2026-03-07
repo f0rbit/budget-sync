@@ -1,9 +1,14 @@
 import type { RentConfig } from "../config.js";
-import type {
-	CategorizedTransaction,
-	ExcludedTransaction,
-	MerchantMappings,
-	RawTransaction,
+import {
+	type AiCategorizationRequest,
+	type AiCategorizationResult,
+	type AiCategorizer,
+	CATEGORY_DESCRIPTIONS,
+	type CategorizedTransaction,
+	type Category,
+	type ExcludedTransaction,
+	type MerchantMappings,
+	type RawTransaction,
 } from "../providers/types.js";
 import { createFallback } from "./enrich-mapper.js";
 import { filterTransaction } from "./filter.js";
@@ -13,6 +18,7 @@ import { handleRent, isRentTransaction } from "./rent.js";
 export interface PipelineContext {
 	mappings: MerchantMappings;
 	rentConfig: RentConfig;
+	aiCategorizer?: AiCategorizer;
 }
 
 export type PipelineOutput =
@@ -48,16 +54,63 @@ export async function categorizeAll(
 ): Promise<{
 	categorized: CategorizedTransaction[];
 	excluded: ExcludedTransaction[];
+	aiCategorizationResult?: AiCategorizationResult;
 }> {
 	const categorized: CategorizedTransaction[] = [];
 	const excluded: ExcludedTransaction[] = [];
 
+	// Steps 1-4: Per-transaction pipeline (filter → rent → mapping → fallback)
 	for (const tx of transactions) {
 		const result = await categorizePipeline(tx, context);
 		if (result.type === "categorized") {
 			categorized.push(result.transaction);
 		} else {
 			excluded.push(result.transaction);
+		}
+	}
+
+	// Step 5: AI batch categorization for "Other" transactions
+	if (context.aiCategorizer) {
+		const uncategorized = categorized.filter((tx) => tx.category === "Other");
+		if (uncategorized.length > 0) {
+			const alreadyCategorized = categorized.filter((tx) => tx.category !== "Other");
+
+			const request: AiCategorizationRequest = {
+				uncategorized: uncategorized.map((tx) => ({
+					externalId: tx.externalId,
+					description: tx.rawDescription,
+					amount: tx.amount,
+					date: tx.date,
+				})),
+				context: {
+					categorizedTransactions: alreadyCategorized.slice(0, 10).map((tx) => ({
+						item: tx.item,
+						category: tx.category,
+						amount: tx.amount,
+						date: tx.date,
+					})),
+					categories: (Object.entries(CATEGORY_DESCRIPTIONS) as [Category, string][]).map(([name, description]) => ({
+						name,
+						description,
+					})),
+					existingMappings: context.mappings.mappings,
+				},
+			};
+
+			const aiResult = await context.aiCategorizer.categorize(request);
+			if (aiResult.ok) {
+				// Apply AI categorizations to the "Other" transactions
+				for (const cat of aiResult.value.categorizations) {
+					const tx = categorized.find((t) => t.externalId === cat.externalId);
+					if (tx) {
+						tx.category = cat.category;
+						tx.item = cat.item;
+						if (cat.notes) tx.notes = cat.notes;
+					}
+				}
+				return { categorized, excluded, aiCategorizationResult: aiResult.value };
+			}
+			// AI failure is non-fatal — transactions stay as "Other"
 		}
 	}
 
