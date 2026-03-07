@@ -9,6 +9,11 @@
 			"description": "Path to SQLite database file",
 			"default": "./data/budget-sync.db"
 		},
+		"corpus_dir": {
+			"type": "string",
+			"description": "Directory for corpus versioned API snapshots",
+			"default": "./data/corpus"
+		},
 		"vault_path": {
 			"type": "string",
 			"description": "Absolute path to Obsidian vault"

@@ -27,6 +27,7 @@ export const syncConfigSchema = z.object({
 
 export const configSchema = z.object({
 	db_path: z.string().default("./data/budget-sync.db"),
+	corpus_dir: z.string().default("./data/corpus"),
 	vault_path: z.string(),
 	budget_dir: z.string().default("Budget"),
 	provider: z.enum(["basiq", "csv", "manual"]).default("basiq"),

@@ -4,6 +4,9 @@
   // Where the SQLite database lives
   "db_path": "./data/budget-sync.db",
 
+  // Where corpus stores versioned API snapshots
+  "corpus_dir": "./data/corpus",
+
   // Obsidian vault (for export command only)
   "vault_path": "/Users/you/Documents/Vaults/Personal",
   "budget_dir": "Budget",

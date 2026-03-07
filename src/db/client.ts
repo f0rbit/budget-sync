@@ -1,9 +1,15 @@
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
+import type { AppCorpus } from "../corpus/index.js";
 import * as schema from "./schema.js";
 
 export type AppDatabase = ReturnType<typeof createDb>;
+
+export interface AppContext {
+	db: AppDatabase;
+	corpus: AppCorpus;
+}
 
 export function createDb(dbPath: string) {
 	const sqlite = new Database(dbPath);
