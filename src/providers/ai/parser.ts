@@ -61,10 +61,7 @@ function extractJson(text: string): string {
 	return text.trim();
 }
 
-function buildContentBlocks(
-	content: string,
-	mimeType: string,
-): Anthropic.Messages.ContentBlockParam[] {
+function buildContentBlocks(content: string, mimeType: string): Anthropic.Messages.ContentBlockParam[] {
 	if (mimeType === "application/pdf") {
 		return [
 			{
