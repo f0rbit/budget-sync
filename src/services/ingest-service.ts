@@ -17,6 +17,7 @@ import { syncRuns } from "../db/schema.js";
 import type { DbError, PipelineError, ProviderError } from "../errors.js";
 import { errors } from "../errors.js";
 import { type PipelineContext, categorizeAll } from "../pipeline/categorizer.js";
+import { MAX_DAY_GAP, detectCrossAccountDuplicates } from "../pipeline/dedup.js";
 import { appendMappings, loadMappings } from "../pipeline/local-mappings.js";
 import type {
 	AccountType,
@@ -28,7 +29,7 @@ import type {
 } from "../providers/types.js";
 import { findAccountByExternalId, upsertAccount } from "./account-service.js";
 import { getCurrentNetWorth } from "./networth-service.js";
-import { createTransaction } from "./transaction-service.js";
+import { createTransaction, getExistingDebitsForDedup } from "./transaction-service.js";
 
 // === Types ===
 
@@ -51,6 +52,7 @@ export interface IngestSummary {
 	accountName: string;
 	transactionsCreated: number;
 	transactionsExcluded: number;
+	transactionsDeduplicated: number;
 	transactionsSkipped: number;
 	snapshotsUpserted: number;
 	netWorth?: number;
@@ -260,7 +262,10 @@ export async function ingestDocument(
 		aiCategorizer: options?.aiCategorizer,
 	};
 
-	const { categorized, excluded, aiCategorizationResult } = await categorizeAll(transactions, pipelineContext);
+	const pipelineResult = await categorizeAll(transactions, pipelineContext);
+	let categorized = pipelineResult.categorized;
+	const excluded = pipelineResult.excluded;
+	const { aiCategorizationResult } = pipelineResult;
 
 	// Step 10.5: Store AI categorization result in corpus + auto-write mappings
 	if (aiCategorizationResult) {
@@ -286,6 +291,39 @@ export async function ingestDocument(
 			const writeResult = appendMappings(aiCategorizationResult.suggestedMappings);
 			if (writeResult.ok && writeResult.value > 0) {
 				summaryNotes.push(`${writeResult.value} new merchant mapping(s) added`);
+			}
+		}
+	}
+
+	// Step 10.7: Cross-account dedup
+	let transactionsDeduplicated = 0;
+	if (categorized.length > 0) {
+		const dates = categorized.map((tx) => tx.date).sort();
+		const earliestDate = dates[0];
+		const latestDate = dates[dates.length - 1];
+
+		if (earliestDate && latestDate) {
+			const from = new Date(earliestDate);
+			from.setDate(from.getDate() - MAX_DAY_GAP);
+			const to = new Date(latestDate);
+			to.setDate(to.getDate() + MAX_DAY_GAP);
+			const dateFrom = from.toISOString().split("T")[0] ?? earliestDate;
+			const dateTo = to.toISOString().split("T")[0] ?? latestDate;
+
+			const existingResult = await getExistingDebitsForDedup(ctx.db, dateFrom, dateTo);
+			if (existingResult.ok && existingResult.value.length > 0) {
+				const dedupResult = detectCrossAccountDuplicates(categorized, existingResult.value, accountType);
+
+				transactionsDeduplicated = dedupResult.duplicates.length;
+				if (transactionsDeduplicated > 0) {
+					categorized = dedupResult.kept;
+					excluded.push(
+						...dedupResult.duplicates.map((d) => ({
+							...d,
+						})),
+					);
+					summaryNotes.push(`${transactionsDeduplicated} cross-account duplicate(s) excluded`);
+				}
 			}
 		}
 	}
@@ -396,6 +434,7 @@ export async function ingestDocument(
 		accountName,
 		transactionsCreated,
 		transactionsExcluded: excluded.length,
+		transactionsDeduplicated,
 		transactionsSkipped,
 		snapshotsUpserted: 0,
 		netWorth,

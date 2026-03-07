@@ -191,7 +191,7 @@ export async function getExistingDebitsForDedup(
 			const rows = db
 				.select({
 					id: transactions.id,
-					accountId: transactions.accountId,
+					accountId: accounts.externalId,
 					accountType: accounts.type,
 					date: transactions.date,
 					item: transactions.item,

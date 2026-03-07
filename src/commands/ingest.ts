@@ -93,6 +93,9 @@ export const ingestCommand = new Command("ingest")
 		console.log(`  Account:                ${summary.accountName}`);
 		console.log(`  Transactions created:   ${summary.transactionsCreated}`);
 		console.log(`  Transactions excluded:  ${summary.transactionsExcluded}`);
+		if (summary.transactionsDeduplicated > 0) {
+			console.log(`  Cross-acct duplicates:  ${summary.transactionsDeduplicated}`);
+		}
 		console.log(`  Duplicates skipped:     ${summary.transactionsSkipped}`);
 		console.log(`  Balance snapshots:      ${summary.snapshotsUpserted}`);
 		if (summary.netWorth !== undefined) {

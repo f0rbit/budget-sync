@@ -7,6 +7,7 @@ import type { AppConfig } from "../../src/config.js";
 import type { AppContext } from "../../src/db/client.js";
 import { accounts, syncRuns, transactions } from "../../src/db/schema.js";
 import type { InMemoryDocumentParser } from "../../src/providers/in-memory/document-parser.js";
+import type { MerchantMappings } from "../../src/providers/types.js";
 import { upsertAccount } from "../../src/services/account-service.js";
 import { type IngestOptions, ingestDocument } from "../../src/services/ingest-service.js";
 import { upsertSnapshot } from "../../src/services/snapshot-service.js";
@@ -304,5 +305,182 @@ describe("ingest-workflow", () => {
 		// Should list both accounts in the breakdown
 		const accountNames = compResult.value.data.accountBalances.map((a: { accountName: string }) => a.accountName);
 		expect(accountNames).toContain("Savings Account");
+	});
+
+	it("I11: cross-account dedup excludes savings duplicate", async () => {
+		const testMappings: MerchantMappings = {
+			mappings: [{ match: "OFFICEWORKS", item: "Officeworks", category: "Shopping" }],
+			exclusions: [],
+		};
+
+		// First ingest: credit card statement with Officeworks $42.50
+		const ccDoc = makeParsedDocument({
+			transactions: [
+				makeTransaction({
+					id: "cc-officeworks",
+					description: "OFFICEWORKS BRISBANE",
+					amount: 42.5,
+					direction: "debit",
+					transactionDate: "2026-02-28",
+					postDate: "2026-02-28",
+					accountId: "pending",
+				}),
+			],
+			account: { name: "Amplify Platinum", institution: "Amplify", type: "credit" },
+		});
+
+		const ccParser = createTestDocumentParser({ defaultResult: ccDoc });
+		const result1 = await ingestDocument(ctx, ccParser, filePath, config, { mappings: testMappings });
+		expect(result1.ok).toBe(true);
+		if (!result1.ok) return;
+		expect(result1.value.transactionsCreated).toBe(1);
+
+		// Second ingest: savings statement with same Officeworks $42.50 (2 days later)
+		const savingsDoc = makeParsedDocument({
+			transactions: [
+				makeTransaction({
+					id: "sav-officeworks",
+					description: "Officeworks Pty Ltd Brisbane OFFICEWORKS",
+					amount: 42.5,
+					direction: "debit",
+					transactionDate: "2026-03-02",
+					postDate: "2026-03-02",
+					accountId: "pending",
+				}),
+			],
+			account: { name: "BankSA Savings", institution: "BankSA", type: "savings" },
+		});
+
+		const savParser = createTestDocumentParser({ defaultResult: savingsDoc });
+		const result2 = await ingestDocument(ctx, savParser, filePath, config, { mappings: testMappings });
+		expect(result2.ok).toBe(true);
+		if (!result2.ok) return;
+
+		// The savings duplicate should have been detected
+		expect(result2.value.transactionsDeduplicated).toBe(1);
+		expect(result2.value.transactionsCreated).toBe(0);
+
+		// DB should have only 1 transaction (the credit card one)
+		const dbTxs = ctx.db.select().from(transactions).all();
+		expect(dbTxs.length).toBe(1);
+		expect(dbTxs[0]?.rawDescription).toContain("OFFICEWORKS");
+	});
+
+	it("I12: cross-account dedup respects item mismatch", async () => {
+		const testMappings: MerchantMappings = {
+			mappings: [
+				{ match: "UBER \\*ONE MEMBERSHIP", item: "Uber One", category: "Subscriptions" },
+				{ match: "AMZNPRIMEA", item: "Amazon Prime", category: "Subscriptions" },
+			],
+			exclusions: [],
+		};
+
+		// First ingest: credit card with Uber One $9.99
+		const ccDoc = makeParsedDocument({
+			transactions: [
+				makeTransaction({
+					id: "cc-uber",
+					description: "UBER *ONE MEMBERSHIP",
+					amount: 9.99,
+					direction: "debit",
+					transactionDate: "2026-02-28",
+					postDate: "2026-02-28",
+					accountId: "pending",
+				}),
+			],
+			account: { name: "Amplify Platinum", institution: "Amplify", type: "credit" },
+		});
+
+		const ccParser = createTestDocumentParser({ defaultResult: ccDoc });
+		const result1 = await ingestDocument(ctx, ccParser, filePath, config, { mappings: testMappings });
+		expect(result1.ok).toBe(true);
+		if (!result1.ok) return;
+
+		// Second ingest: savings with Amazon Prime $9.99 (different item, same amount)
+		const savingsDoc = makeParsedDocument({
+			transactions: [
+				makeTransaction({
+					id: "sav-amazon",
+					description: "AMZNPRIMEA MEMBERSHIP",
+					amount: 9.99,
+					direction: "debit",
+					transactionDate: "2026-03-02",
+					postDate: "2026-03-02",
+					accountId: "pending",
+				}),
+			],
+			account: { name: "BankSA Savings", institution: "BankSA", type: "savings" },
+		});
+
+		const savParser = createTestDocumentParser({ defaultResult: savingsDoc });
+		const result2 = await ingestDocument(ctx, savParser, filePath, config, { mappings: testMappings });
+		expect(result2.ok).toBe(true);
+		if (!result2.ok) return;
+
+		// No dedup — different items
+		expect(result2.value.transactionsDeduplicated).toBe(0);
+		expect(result2.value.transactionsCreated).toBe(1);
+
+		// DB has both
+		const dbTxs = ctx.db.select().from(transactions).all();
+		expect(dbTxs.length).toBe(2);
+	});
+
+	it("I13: cross-account dedup ignores same-account transactions", async () => {
+		const testMappings: MerchantMappings = {
+			mappings: [{ match: "WOOLWORTHS", item: "Woolworths", category: "Woolworths" }],
+			exclusions: [],
+		};
+
+		// First ingest from BankSA Everyday
+		const doc1 = makeParsedDocument({
+			transactions: [
+				makeTransaction({
+					id: "tx-a",
+					description: "WOOLWORTHS 1234",
+					amount: 50.0,
+					direction: "debit",
+					transactionDate: "2026-03-01",
+					postDate: "2026-03-01",
+					accountId: "pending",
+				}),
+			],
+			account: { name: "BankSA Everyday", institution: "BankSA", type: "transaction" },
+		});
+
+		const parser1 = createTestDocumentParser({ defaultResult: doc1 });
+		const result1 = await ingestDocument(ctx, parser1, filePath, config, { mappings: testMappings });
+		expect(result1.ok).toBe(true);
+		if (!result1.ok) return;
+		expect(result1.value.transactionsCreated).toBe(1);
+
+		// Second ingest from SAME account
+		const doc2 = makeParsedDocument({
+			transactions: [
+				makeTransaction({
+					id: "tx-b",
+					description: "WOOLWORTHS 5678",
+					amount: 50.0,
+					direction: "debit",
+					transactionDate: "2026-03-02",
+					postDate: "2026-03-02",
+					accountId: "pending",
+				}),
+			],
+			account: { name: "BankSA Everyday", institution: "BankSA", type: "transaction" },
+		});
+
+		const parser2 = createTestDocumentParser({ defaultResult: doc2 });
+		const result2 = await ingestDocument(ctx, parser2, filePath, config, { mappings: testMappings });
+		expect(result2.ok).toBe(true);
+		if (!result2.ok) return;
+
+		// No dedup — same account
+		expect(result2.value.transactionsDeduplicated).toBe(0);
+		expect(result2.value.transactionsCreated).toBe(1);
+
+		// DB has both
+		const dbTxs = ctx.db.select().from(transactions).all();
+		expect(dbTxs.length).toBe(2);
 	});
 });
