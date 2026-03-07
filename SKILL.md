@@ -37,6 +37,8 @@ budget-sync/
       mappings.ts                     -- `budget-sync mappings` command handler
       export.ts                       -- `budget-sync export` command handler
       import.ts                       -- `budget-sync import` command handler
+      snapshot.ts                       -- `budget-sync snapshot` command handler
+      networth.ts                       -- `budget-sync networth` command handler
     corpus/
       index.ts                        -- Barrel: re-exports AppCorpus, stores, snapshot types
       client.ts                       -- buildCorpus(), createCorpus(dataDir), createTestCorpus()
@@ -67,8 +69,12 @@ budget-sync/
       account-service.ts              -- upsertAccount(), listAccounts(), deactivateAccount(), findAccountByExternalId()
       transaction-service.ts          -- createTransaction(), getTransactions(filters), getUncategorized()
       export-service.ts               -- exportToObsidian(db, vaultPath, budgetDir, options)
+      snapshot-service.ts               -- upsertSnapshot(), getLatestSnapshots(), getSnapshotHistory()
+      networth-service.ts               -- getCurrentNetWorth(), getNetWorthHistory() with carry-forward
   __tests__/
     integration/                      -- Integration tests (in-memory DB + corpus)
+      snapshot.test.ts                  -- Snapshot service + sync integration (10 scenarios)
+      networth.test.ts                  -- Net worth calculation tests (8 scenarios)
     unit/                             -- Unit tests (pure functions)
   drizzle/                            -- Generated migrations (never hand-edit)
   config.example.jsonc                -- Example config (committed)
@@ -195,6 +201,7 @@ Batch function: `categorizeAll(transactions, context)` returns `{ categorized: C
 3. Discover accounts -> snapshot to `raw-accounts` corpus store -> upsert into SQLite
 4. Fetch transactions per account -> snapshot each to `raw-transactions` corpus store
 5. Fetch balances -> snapshot to `raw-balances` corpus store (non-fatal)
+5.5. Materialize balances to snapshots SQLite table (gated by `auto_snapshot`, non-fatal)
 6. Run categorization pipeline (`categorizeAll`)
 7. Snapshot sync results to `sync-results` corpus store (with `parents` linking to raw-transactions versions)
 8. Materialize categorized transactions into SQLite (skip in dry-run, dedup by external_id)
@@ -307,6 +314,9 @@ bun run dev -- accounts
 bun run dev -- export
 bun run dev -- import
 bun run dev -- mappings
+bun run dev -- snapshot
+bun run dev -- networth
+bun run dev -- networth --history --format csv
 ```
 
 ## Gotchas
@@ -329,3 +339,15 @@ bun run dev -- mappings
 - `InMemoryBankProvider` requires `authenticate()` before any other method -- returns `AUTH_FAILED` otherwise (matches real provider behavior)
 - `filterTransaction()` returns `Result<RawTransaction, ExcludedTransaction>` -- the err case is NOT an error, it is a categorized exclusion (credits, matched exclusion rules)
 - `AppDatabase` is a type alias for `ReturnType<typeof createDb>`, not a class -- do not `new` it
+
+## M1: Snapshots + Net Worth
+
+- `bun run dev -- snapshot` — capture current balances without full sync
+- `bun run dev -- networth` — show current net worth breakdown
+- `bun run dev -- networth --history --format csv` — net worth over time
+- Snapshots table: unique constraint on (account_id, date) — upserts on conflict
+- Net worth formula: `savings + transaction - credit` (super/investments added in M2/M3)
+- `config.sync.auto_snapshot` (default true) controls whether sync materializes balances
+- Carry-forward: net worth history uses last-known balance for accounts without a snapshot on a given date
+- Service functions receive `AppDatabase`, not `AppContext` (they don't need corpus access)
+- 82 tests passing across 10 files after M1
