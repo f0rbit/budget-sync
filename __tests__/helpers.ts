@@ -9,6 +9,7 @@ import { InMemorySuperProvider } from "../src/providers/in-memory/super-provider
 import type {
 	AccountBalance,
 	AccountInfo,
+	CategorizedTransaction,
 	ContributionType,
 	ParsedDocument,
 	RawTransaction,
@@ -142,6 +143,25 @@ export function createTestDocumentParser(options?: {
 
 export function createTestAiCategorizer(): InMemoryAiCategorizer {
 	return new InMemoryAiCategorizer();
+}
+
+export function makeCategorizedTransaction(
+	overrides?: Partial<CategorizedTransaction> & { externalId?: string },
+): CategorizedTransaction {
+	return {
+		externalId: overrides?.externalId ?? createId(),
+		date: "2026-03-01",
+		postDate: "2026-03-01",
+		rawDescription: "TEST TRANSACTION",
+		item: "Test Item",
+		amount: 25.0,
+		direction: "debit",
+		category: "Shopping",
+		notes: "",
+		excluded: false,
+		accountId: "acc-1",
+		...overrides,
+	};
 }
 
 export function makeParsedDocument(overrides?: Partial<ParsedDocument>): ParsedDocument {

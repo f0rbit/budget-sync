@@ -1,9 +1,9 @@
 import { type Result, try_catch_async } from "@f0rbit/corpus";
 import { and, desc, eq, gte, like, lte, or, sql } from "drizzle-orm";
 import type { AppDatabase } from "../db/client.js";
-import { transactions } from "../db/schema.js";
+import { accounts, transactions } from "../db/schema.js";
 import { type DbError, errors } from "../errors.js";
-import type { CategorizedTransaction, Category } from "../providers/types.js";
+import type { AccountType, CategorizedTransaction, Category } from "../providers/types.js";
 
 // === Types ===
 
@@ -166,5 +166,52 @@ export async function getCategorySummary(
 			return baseQuery.all();
 		},
 		(e) => errors.dbError(`Failed to get category summary: ${e}`, e),
+	);
+}
+
+// === Dedup helpers ===
+
+export interface DedupCandidate {
+	id: string;
+	accountId: string;
+	accountType: AccountType;
+	date: string;
+	item: string;
+	amount: number;
+	excluded: boolean;
+}
+
+export async function getExistingDebitsForDedup(
+	db: AppDatabase,
+	dateFrom: string,
+	dateTo: string,
+): Promise<Result<DedupCandidate[], DbError>> {
+	return try_catch_async(
+		async () => {
+			const rows = db
+				.select({
+					id: transactions.id,
+					accountId: transactions.accountId,
+					accountType: accounts.type,
+					date: transactions.date,
+					item: transactions.item,
+					amount: transactions.amount,
+					excluded: transactions.excluded,
+				})
+				.from(transactions)
+				.innerJoin(accounts, eq(transactions.accountId, accounts.id))
+				.where(
+					and(
+						eq(transactions.direction, "debit"),
+						eq(transactions.excluded, false),
+						gte(transactions.date, dateFrom),
+						lte(transactions.date, dateTo),
+					),
+				)
+				.all();
+
+			return rows as DedupCandidate[];
+		},
+		(e) => errors.dbError(`Failed to query transactions for dedup: ${e}`, e),
 	);
 }

@@ -56,7 +56,221 @@
 		{ "match": "FORUM MELBOURNE", "item": "Forum Melbourne", "category": "Entertainment" },
 		{ "match": "SEA LIFE", "item": "Sea Life", "category": "Entertainment" },
 		{ "match": "NGV", "item": "NGV", "category": "Entertainment" },
-		{ "match": "AUST CNT FOR CONT AR", "item": "ACCA", "category": "Entertainment" }
+		{
+			"match": "AUST CNT FOR CONT AR",
+			"item": "ACCA",
+			"category": "Entertainment"
+		},
+		{
+			"match": "WATER MAX",
+			"item": "Water bill",
+			"category": "Bills"
+		},
+		{
+			"match": "MONATEO",
+			"item": "Monateo",
+			"category": "Eating Out"
+		},
+		{
+			"match": "C PLUS CO",
+			"item": "C Plus Co",
+			"category": "Eating Out"
+		},
+		{
+			"match": "PAYPAL *AUSTRALIAPO",
+			"item": "Australia Post",
+			"category": "Other"
+		},
+		{
+			"match": "SP BLUNT-AUSTRALIA",
+			"item": "SP Blunt Australia",
+			"category": "Shopping"
+		},
+		{
+			"match": "BEEM\\",
+			"item": "Beem payment",
+			"category": "Other"
+		},
+		{
+			"match": "VIETNAMESE E",
+			"item": "Vietnamese restaurant",
+			"category": "Eating Out"
+		},
+		{
+			"match": "MISS DEMEANOUR",
+			"item": "Miss Demeanour",
+			"category": "Alcohol"
+		},
+		{
+			"match": "PAYPAL *AMBERJARS",
+			"item": "Amber Jars",
+			"category": "Shopping"
+		},
+		{
+			"match": "CAMERON WINTER",
+			"item": "Cameron Winter",
+			"category": "Entertainment"
+		},
+		{
+			"match": "FOREIGN CURRENCY CONVERSN FEE",
+			"item": "Foreign currency fee",
+			"category": "Other"
+		},
+		{
+			"match": "SQ *KCS CHICKEN",
+			"item": "KCS Chicken",
+			"category": "Eating Out"
+		},
+		{
+			"match": "THE TIVOLI",
+			"item": "The Tivoli",
+			"category": "Entertainment"
+		},
+		{
+			"match": "SQ *FORTITUDE MUSIC HA",
+			"item": "Fortitude Music Hall",
+			"category": "Entertainment"
+		},
+		{
+			"match": "SQ *SHAH CAFE",
+			"item": "Shah Cafe",
+			"category": "Eating Out"
+		},
+		{
+			"match": "FORTITUDEHALL/",
+			"item": "Fortitude Hall",
+			"category": "Entertainment"
+		},
+		{
+			"match": "LS SAVILE ROW",
+			"item": "Savile Row",
+			"category": "Eating Out"
+		},
+		{
+			"match": "FINNMCCOOL'SIRISHBAR",
+			"item": "Finn McCool's Irish Bar",
+			"category": "Alcohol"
+		},
+		{
+			"match": "INDEPAL PTY LTD",
+			"item": "Indepal",
+			"category": "Shopping"
+		},
+		{
+			"match": "AHMETS TURKISH RESTAUR",
+			"item": "Ahmet's Turkish Restaurant",
+			"category": "Eating Out"
+		},
+		{
+			"match": "GELARE CAFE",
+			"item": "Gelare Cafe",
+			"category": "Eating Out"
+		},
+		{
+			"match": "LS SOUTH BRISBANE MESS",
+			"item": "LS South Brisbane Mess",
+			"category": "Eating Out"
+		},
+		{
+			"match": "PUNJABIPLACE",
+			"item": "Punjabi Place",
+			"category": "Eating Out"
+		},
+		{
+			"match": "CATHEDRAL COFFEE",
+			"item": "Cathedral Coffee",
+			"category": "Eating Out"
+		},
+		{
+			"match": "CROQUE MONSIEUR",
+			"item": "Croque Monsieur",
+			"category": "Eating Out"
+		},
+		{
+			"match": "MUNICH MELBOURNE",
+			"item": "Munich Docklands",
+			"category": "Alcohol"
+		},
+		{
+			"match": "SUSHI JIRO",
+			"item": "Sushi Jiro Emporium",
+			"category": "Eating Out"
+		},
+		{
+			"match": "PALERMO PERFUMES",
+			"item": "Palermo Perfumes",
+			"category": "Shopping"
+		},
+		{
+			"match": "VIDWA PTY LTD",
+			"item": "Vidwa",
+			"category": "Other"
+		},
+		{
+			"match": "SQ *SEVEN SEEDS",
+			"item": "Seven Seeds Carlton",
+			"category": "Eating Out"
+		},
+		{
+			"match": "7-ELEVEN",
+			"item": "7-Eleven",
+			"category": "Eating Out"
+		},
+		{
+			"match": "MELBOURNE AIRPORT",
+			"item": "Melbourne Airport parking",
+			"category": "Transport"
+		},
+		{
+			"match": "AUSTRALIAN CHAMBER ORC",
+			"item": "Australian Chamber Orchestra",
+			"category": "Entertainment"
+		},
+		{
+			"match": "PHATBOYBRISBANE",
+			"item": "Phat Boy Brisbane",
+			"category": "Eating Out"
+		},
+		{
+			"match": "WOOLWORTHS ONLINE",
+			"item": "Woolworths Online",
+			"category": "Woolworths"
+		},
+		{
+			"match": "NINTENDO",
+			"item": "Nintendo",
+			"category": "Entertainment"
+		},
+		{
+			"match": "CASEWAY MACARTHUR",
+			"item": "Caseway Macarthur",
+			"category": "Shopping"
+		},
+		{
+			"match": "OZZ TURQUOISE KEBABS",
+			"item": "Ozz Turquoise Kebabs",
+			"category": "Eating Out"
+		},
+		{
+			"match": "LS OSBOURNE HOTEL",
+			"item": "LS Osbourne Hotel",
+			"category": "Alcohol"
+		},
+		{
+			"match": "VAPIANO",
+			"item": "Vapiano",
+			"category": "Eating Out"
+		},
+		{
+			"match": "MYSTERIOUS SHOP",
+			"item": "Mysterious Shop",
+			"category": "Shopping"
+		},
+		{
+			"match": "UNKNOWN PLACE",
+			"item": "Unknown Place",
+			"category": "Entertainment"
+		}
 	],
 
 	"exclusions": [
