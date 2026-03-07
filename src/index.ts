@@ -7,6 +7,7 @@ import { mappingsCommand } from "./commands/mappings.js";
 import { networthCommand } from "./commands/networth.js";
 import { snapshotCommand } from "./commands/snapshot.js";
 import { superCommand } from "./commands/super.js";
+import { transactionsCommand } from "./commands/transactions.js";
 
 const program = new Command()
 	.name("budget-sync")
@@ -20,5 +21,6 @@ program.addCommand(ingestCommand);
 program.addCommand(snapshotCommand);
 program.addCommand(networthCommand);
 program.addCommand(superCommand);
+program.addCommand(transactionsCommand);
 
 program.parse();

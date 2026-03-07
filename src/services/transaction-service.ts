@@ -1,5 +1,5 @@
 import { type Result, try_catch_async } from "@f0rbit/corpus";
-import { and, desc, eq, gte, lte } from "drizzle-orm";
+import { and, desc, eq, gte, like, lte, or, sql } from "drizzle-orm";
 import type { AppDatabase } from "../db/client.js";
 import { transactions } from "../db/schema.js";
 import { type DbError, errors } from "../errors.js";
@@ -108,4 +108,63 @@ export async function getTransactions(
 
 export async function getUncategorized(db: AppDatabase): Promise<Result<TransactionRow[], DbError>> {
 	return getTransactions(db, { category: "Other" });
+}
+
+export async function searchTransactions(
+	db: AppDatabase,
+	query: string,
+	limit?: number,
+): Promise<Result<TransactionRow[], DbError>> {
+	return try_catch_async(
+		async () => {
+			const pattern = `%${query}%`;
+			return db
+				.select()
+				.from(transactions)
+				.where(or(like(transactions.item, pattern), like(transactions.rawDescription, pattern)))
+				.orderBy(desc(transactions.date))
+				.limit(limit ?? 50)
+				.all();
+		},
+		(e) => errors.dbError(`Failed to search transactions: ${e}`, e),
+	);
+}
+
+export async function getCategorySummary(
+	db: AppDatabase,
+	filters?: { dateFrom?: string; dateTo?: string; accountId?: string },
+): Promise<Result<Array<{ category: string; total: number; count: number }>, DbError>> {
+	return try_catch_async(
+		async () => {
+			const conditions = [];
+			if (filters?.dateFrom) conditions.push(gte(transactions.date, filters.dateFrom));
+			if (filters?.dateTo) conditions.push(lte(transactions.date, filters.dateTo));
+			if (filters?.accountId) conditions.push(eq(transactions.accountId, filters.accountId));
+
+			const baseQuery =
+				conditions.length > 0
+					? db
+							.select({
+								category: transactions.category,
+								total: sql<number>`sum(${transactions.amount})`,
+								count: sql<number>`count(*)`,
+							})
+							.from(transactions)
+							.where(and(...conditions))
+							.groupBy(transactions.category)
+							.orderBy(desc(sql`sum(${transactions.amount})`))
+					: db
+							.select({
+								category: transactions.category,
+								total: sql<number>`sum(${transactions.amount})`,
+								count: sql<number>`count(*)`,
+							})
+							.from(transactions)
+							.groupBy(transactions.category)
+							.orderBy(desc(sql`sum(${transactions.amount})`));
+
+			return baseQuery.all();
+		},
+		(e) => errors.dbError(`Failed to get category summary: ${e}`, e),
+	);
 }

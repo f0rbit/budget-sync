@@ -2,10 +2,10 @@ import { Command } from "commander";
 import { loadConfig } from "../config.js";
 import { createCorpus } from "../corpus/client.js";
 import { createDb } from "../db/client.js";
-import { CsvBankProvider } from "../providers/csv/provider.js";
-import { createDocumentParser } from "../providers/index.js";
+import { CsvDocumentParser } from "../providers/csv/document-parser.js";
+import { createAiCategorizer, createDocumentParser } from "../providers/index.js";
+import type { DocumentParser } from "../providers/types.js";
 import { ingestDocument } from "../services/ingest-service.js";
-import { syncTransactions } from "../services/sync-service.js";
 
 export const ingestCommand = new Command("ingest")
 	.description("Parse a bank document (PDF, CSV, image) and import transactions")
@@ -13,7 +13,6 @@ export const ingestCommand = new Command("ingest")
 	.option("--account <name>", "Account name (overrides AI inference)")
 	.option("--account-type <type>", "Account type: transaction, savings, credit", "transaction")
 	.option("--institution <name>", "Institution name (e.g., BankSA)")
-	.option("--parser <type>", "Parser: ai (default), csv (fast path)")
 	.option("--from <date>", "Only import transactions after this date (YYYY-MM-DD)")
 	.option("--to <date>", "Only import transactions before this date (YYYY-MM-DD)")
 	.option("--dry-run", "Preview without writing to DB")
@@ -43,60 +42,37 @@ export const ingestCommand = new Command("ingest")
 		const corpus = createCorpus(config.corpus_dir);
 		const ctx = { db, corpus };
 
-		// CSV fast path
-		if (options.parser === "csv" || (!options.parser && file.endsWith(".csv"))) {
-			// Use existing CSV provider + sync service
-			const provider = new CsvBankProvider({
-				filePath: file,
-				accountName: options.account ?? "CSV Import",
-				accountType: options.accountType as "transaction" | "savings" | "credit",
-			});
-
-			if (options.dryRun) {
-				console.log("Dry run — no data will be written to DB.\n");
-			}
-
-			const result = await syncTransactions(ctx, provider, config, {
-				dateFrom: options.from,
-				dateTo: options.to,
-				dryRun: options.dryRun,
-				verbose: options.verbose,
-			});
-
-			if (!result.ok) {
-				console.error(`Import failed: ${result.error.message}`);
+		// Select parser based on file type
+		let parser: DocumentParser;
+		if (file.endsWith(".csv")) {
+			parser = new CsvDocumentParser();
+		} else {
+			const parserResult = createDocumentParser(config);
+			if (!parserResult.ok) {
+				const pe = parserResult.error;
+				console.error(`Parser error: ${pe.code === "CONFIG_NOT_FOUND" ? pe.path : pe.message}`);
 				process.exit(1);
 			}
-
-			console.log("CSV import complete:");
-			console.log(`  Transactions created:   ${result.value.transactionsCreated}`);
-			console.log(`  Transactions excluded:  ${result.value.transactionsExcluded}`);
-			console.log(`  Duplicates skipped:     ${result.value.transactionsSkipped}`);
-			console.log(`  Duration:               ${result.value.duration}ms`);
-			return;
+			parser = parserResult.value;
 		}
 
-		// AI parser path
-		const parserResult = createDocumentParser(config);
-		if (!parserResult.ok) {
-			const pe = parserResult.error;
-			console.error(`Parser error: ${pe.code === "CONFIG_NOT_FOUND" ? pe.path : pe.message}`);
-			process.exit(1);
-		}
+		// Create AI categorizer (optional — graceful if no API key)
+		const catResult = createAiCategorizer(config);
+		const aiCategorizer = catResult.ok ? catResult.value : undefined;
 
 		if (options.dryRun) {
 			console.log("Dry run — corpus snapshots will be created but DB will not be modified.\n");
 		}
 
 		if (options.verbose) {
-			console.log(`Parser:       ${parserResult.value.name}`);
-			console.log(`Model:        ${config.anthropic.model}`);
+			console.log(`Parser:       ${parser.name}`);
+			console.log(`AI categorizer: ${aiCategorizer ? "enabled" : "disabled (no API key)"}`);
 			console.log(`File:         ${file}`);
 			console.log(`Date range:   ${options.from ?? "(all)"} to ${options.to ?? "(all)"}`);
 			console.log("");
 		}
 
-		const result = await ingestDocument(ctx, parserResult.value, file, config, {
+		const result = await ingestDocument(ctx, parser, file, config, {
 			accountName: options.account,
 			accountType: options.accountType,
 			institution: options.institution,
@@ -104,6 +80,7 @@ export const ingestCommand = new Command("ingest")
 			dateTo: options.to,
 			dryRun: options.dryRun,
 			verbose: options.verbose,
+			aiCategorizer,
 		});
 
 		if (!result.ok) {
@@ -125,7 +102,7 @@ export const ingestCommand = new Command("ingest")
 		console.log(`  Status:                 ${summary.status}`);
 
 		if (summary.notes.length > 0) {
-			console.log("\nNotes from parser:");
+			console.log("\nNotes:");
 			for (const note of summary.notes) {
 				console.log(`  - ${note}`);
 			}
