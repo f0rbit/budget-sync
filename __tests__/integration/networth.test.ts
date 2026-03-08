@@ -1,20 +1,16 @@
 import { beforeEach, describe, expect, it } from "bun:test";
-import type { AppConfig } from "../../src/config.js";
 import type { AppContext } from "../../src/db/client.js";
 import type { AccountInfo } from "../../src/providers/types.js";
 import { upsertAccount } from "../../src/services/account-service.js";
 import { getCurrentNetWorth, getNetWorthHistory } from "../../src/services/networth-service.js";
 import { upsertSnapshot } from "../../src/services/snapshot-service.js";
-import { syncTransactions } from "../../src/services/sync-service.js";
-import { createTestContext, createTestProvider, makeAccount, makeConfig } from "../helpers.js";
+import { createTestContext, makeAccount } from "../helpers.js";
 
 describe("networth-service", () => {
 	let ctx: AppContext;
-	let config: AppConfig;
 
 	beforeEach(() => {
 		ctx = createTestContext();
-		config = makeConfig();
 	});
 
 	async function seedAccount(overrides: Partial<AccountInfo>): Promise<string> {
@@ -136,16 +132,9 @@ describe("networth-service", () => {
 		expect(result.value[0]?.netWorth).toBe(1500);
 	});
 
-	it("N8: full sync → net worth reflects balances", async () => {
-		const provider = createTestProvider({
-			accounts: [makeAccount({ id: "acc-sav", type: "savings", name: "Savings" })],
-			balances: [{ accountId: "acc-sav", balance: 5000, available: 5000, asOf: "2026-03-01" }],
-			transactions: [],
-		});
-
-		const result = await syncTransactions(ctx, provider, config);
-		expect(result.ok).toBe(true);
-		if (!result.ok) return;
+	it("N8: upsertSnapshot → net worth reflects balance", async () => {
+		const savingsId = await seedAccount({ id: "ext-sav", type: "savings", name: "Savings" });
+		await upsertSnapshot(ctx.db, { accountId: savingsId, date: "2026-03-01", balance: 5000 });
 
 		const nw = await getCurrentNetWorth(ctx.db);
 		expect(nw.ok).toBe(true);

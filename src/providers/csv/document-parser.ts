@@ -57,7 +57,7 @@ export class CsvDocumentParser implements DocumentParser {
 	}
 }
 
-// === Shared CSV parsing (extracted from CsvBankProvider) ===
+// === CSV line parsing ===
 
 function parseCsvLine(line: string): Result<RawTransaction, ProviderError> {
 	const parts = line.split(",");

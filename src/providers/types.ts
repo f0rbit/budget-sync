@@ -119,7 +119,6 @@ export interface MerchantMappings {
  * BankProvider — abstracts bank transaction data access.
  *
  * Implementations:
- * - CsvBankProvider: Manual CSV import
  * - InMemoryBankProvider: Testing (in-memory arrays)
  */
 export interface BankProvider {
@@ -182,19 +181,6 @@ export interface SuperProvider {
 }
 
 // === Sync Run Summary ===
-
-export interface SyncSummary {
-	syncRunId: string;
-	provider: string;
-	accountsSynced: number;
-	transactionsCreated: number;
-	transactionsExcluded: number;
-	transactionsSkipped: number; // duplicates
-	snapshotsCreated: number;
-	status: SyncStatus;
-	duration: number; // milliseconds
-	errors: string[];
-}
 
 // === Document Parser (AI-powered document ingestion) ===
 

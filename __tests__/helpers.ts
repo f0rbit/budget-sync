@@ -4,10 +4,8 @@ import { createTestCorpus } from "../src/corpus/client.js";
 import { type AppContext, createTestDb } from "../src/db/client.js";
 import { InMemoryAiCategorizer } from "../src/providers/in-memory/categorizer.js";
 import { InMemoryDocumentParser } from "../src/providers/in-memory/document-parser.js";
-import { InMemoryBankProvider } from "../src/providers/in-memory/provider.js";
 import { InMemorySuperProvider } from "../src/providers/in-memory/super-provider.js";
 import type {
-	AccountBalance,
 	AccountInfo,
 	CategorizedTransaction,
 	ContributionType,
@@ -22,22 +20,6 @@ export function createTestContext(): AppContext {
 		db: createTestDb(),
 		corpus: createTestCorpus(),
 	};
-}
-
-export function createTestProvider(options?: {
-	transactions?: { accountId: string; items: RawTransaction[] }[];
-	accounts?: AccountInfo[];
-	balances?: AccountBalance[];
-}) {
-	const provider = new InMemoryBankProvider();
-	if (options?.accounts) provider.addAccounts(...options.accounts);
-	if (options?.transactions) {
-		for (const { accountId, items } of options.transactions) {
-			provider.addTransactions(accountId, ...items);
-		}
-	}
-	if (options?.balances) provider.setBalances(options.balances);
-	return provider;
 }
 
 export function makeTransaction(overrides?: Partial<RawTransaction>): RawTransaction {
@@ -90,16 +72,6 @@ export function makeRentConfig() {
 		shared_roommate_contribution: 450,
 		landlord_patterns: ["IPY*GRACZYKTHOMPSON"],
 		debit_rent_patterns: ["Internet Withdrawal.*Rent"],
-	};
-}
-
-export function makeBalance(overrides?: Partial<AccountBalance>): AccountBalance {
-	return {
-		accountId: overrides?.accountId ?? createId(),
-		balance: 1500.0,
-		available: 1400.0,
-		asOf: "2026-03-01",
-		...overrides,
 	};
 }
 

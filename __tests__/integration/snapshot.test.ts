@@ -1,19 +1,15 @@
 import { beforeEach, describe, expect, it } from "bun:test";
-import type { AppConfig } from "../../src/config.js";
 import type { AppContext } from "../../src/db/client.js";
 import { snapshots } from "../../src/db/schema.js";
 import { upsertAccount } from "../../src/services/account-service.js";
 import { getLatestSnapshots, getSnapshotHistory, upsertSnapshot } from "../../src/services/snapshot-service.js";
-import { syncTransactions } from "../../src/services/sync-service.js";
-import { createTestContext, createTestProvider, makeAccount, makeBalance, makeConfig } from "../helpers.js";
+import { createTestContext, makeAccount } from "../helpers.js";
 
 describe("snapshot-service", () => {
 	let ctx: AppContext;
-	let config: AppConfig;
 
 	beforeEach(() => {
 		ctx = createTestContext();
-		config = makeConfig();
 	});
 
 	it("upsertSnapshot creates new snapshot", async () => {
@@ -114,80 +110,6 @@ describe("snapshot-service", () => {
 
 		expect(result.value.length).toBe(1);
 		expect(result.value[0]?.date).toBe("2026-03-05");
-	});
-
-	it("sync materializes balances to snapshots table", async () => {
-		const provider = createTestProvider({
-			accounts: [makeAccount({ id: "acc-1", name: "Everyday", type: "transaction" })],
-			transactions: [],
-			balances: [makeBalance({ accountId: "acc-1", balance: 1500, available: 1400 })],
-		});
-
-		const result = await syncTransactions(ctx, provider, config);
-		expect(result.ok).toBe(true);
-		if (!result.ok) return;
-
-		const rows = ctx.db.select().from(snapshots).all();
-		expect(rows.length).toBeGreaterThanOrEqual(1);
-		expect(rows[0]?.balance).toBe(1500);
-	});
-
-	it("sync with auto_snapshot: false skips materialization", async () => {
-		const provider = createTestProvider({
-			accounts: [makeAccount({ id: "acc-1", name: "Everyday", type: "transaction" })],
-			transactions: [],
-			balances: [makeBalance({ accountId: "acc-1", balance: 1500 })],
-		});
-
-		config.sync.auto_snapshot = false;
-		const result = await syncTransactions(ctx, provider, config);
-		expect(result.ok).toBe(true);
-
-		const rows = ctx.db.select().from(snapshots).all();
-		expect(rows.length).toBe(0);
-	});
-
-	it("sync with balance fetch failure doesn't fail sync", async () => {
-		const provider = createTestProvider({
-			accounts: [makeAccount({ id: "acc-1", name: "Everyday", type: "transaction" })],
-			transactions: [],
-			balances: [makeBalance({ accountId: "acc-1", balance: 1500 })],
-		});
-		provider.failNextBalances = true;
-
-		const result = await syncTransactions(ctx, provider, config);
-		expect(result.ok).toBe(true);
-
-		const rows = ctx.db.select().from(snapshots).all();
-		expect(rows.length).toBe(0);
-	});
-
-	it("multiple syncs on same day update existing snapshots", async () => {
-		const provider1 = createTestProvider({
-			accounts: [makeAccount({ id: "acc-1", name: "Everyday", type: "transaction" })],
-			transactions: [],
-			balances: [makeBalance({ accountId: "acc-1", balance: 1500, available: 1400 })],
-		});
-
-		const result1 = await syncTransactions(ctx, provider1, config);
-		expect(result1.ok).toBe(true);
-
-		const rowsAfterFirst = ctx.db.select().from(snapshots).all();
-		expect(rowsAfterFirst.length).toBe(1);
-		expect(rowsAfterFirst[0]?.balance).toBe(1500);
-
-		const provider2 = createTestProvider({
-			accounts: [makeAccount({ id: "acc-1", name: "Everyday", type: "transaction" })],
-			transactions: [],
-			balances: [makeBalance({ accountId: "acc-1", balance: 1600, available: 1500 })],
-		});
-
-		const result2 = await syncTransactions(ctx, provider2, config);
-		expect(result2.ok).toBe(true);
-
-		const rowsAfterSecond = ctx.db.select().from(snapshots).all();
-		expect(rowsAfterSecond.length).toBe(1);
-		expect(rowsAfterSecond[0]?.balance).toBe(1600);
 	});
 
 	it("snapshot flow — service layer only (manual balance capture without sync)", async () => {

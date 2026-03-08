@@ -4,7 +4,7 @@ import { createDb } from "../db/client.js";
 import { printBreakdownCsv, printBreakdownTable, printHistoryCsv, printHistoryTable } from "../formatters/networth.js";
 import { getCurrentNetWorth, getNetWorthHistory } from "../services/networth-service.js";
 
-const NO_DATA_MSG = "No snapshots found. Run 'budget-sync sync' or 'budget-sync snapshot' first.";
+const NO_DATA_MSG = "No snapshots found. Run 'budget-sync ingest' to import data.";
 
 export const networthCommand = new Command("networth")
 	.description("Show current net worth or net worth history")
