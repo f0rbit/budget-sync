@@ -270,6 +270,11 @@
 			"match": "UNKNOWN PLACE",
 			"item": "Unknown Place",
 			"category": "Entertainment"
+		},
+		{
+			"match": "PAYPAL AUSTRALIA",
+			"item": "PayPal transaction",
+			"category": "Other"
 		}
 	],
 

@@ -5,11 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AppConfig } from "../../src/config.js";
 import type { AppContext } from "../../src/db/client.js";
-import { accounts, syncRuns, transactions } from "../../src/db/schema.js";
+import { accounts, snapshots, syncRuns, transactions } from "../../src/db/schema.js";
 import type { InMemoryDocumentParser } from "../../src/providers/in-memory/document-parser.js";
 import type { MerchantMappings } from "../../src/providers/types.js";
 import { upsertAccount } from "../../src/services/account-service.js";
 import { type IngestOptions, ingestDocument } from "../../src/services/ingest-service.js";
+import { getCurrentNetWorth } from "../../src/services/networth-service.js";
 import { upsertSnapshot } from "../../src/services/snapshot-service.js";
 import {
 	createTestContext,
@@ -482,5 +483,58 @@ describe("ingest-workflow", () => {
 		// DB has both
 		const dbTxs = ctx.db.select().from(transactions).all();
 		expect(dbTxs.length).toBe(2);
+	});
+
+	it("I14: ingest with balance creates snapshot", async () => {
+		const doc = makeParsedDocument({
+			balance: { amount: 1941.55, asOf: "2026-03-07" },
+		});
+		parser.setDefaultResult(doc);
+
+		const result = await ingestDocument(ctx, parser, filePath, config);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+
+		expect(result.value.snapshotsUpserted).toBe(1);
+
+		const snapRows = ctx.db.select().from(snapshots).all();
+		expect(snapRows.length).toBe(1);
+		expect(snapRows[0]?.balance).toBe(1941.55);
+		expect(snapRows[0]?.date).toBe("2026-03-07");
+	});
+
+	it("I15: ingest with balance updates net worth", async () => {
+		const doc = makeParsedDocument({
+			account: { name: "Savings Account", institution: "BankSA", type: "savings" },
+			balance: { amount: 5000, asOf: "2026-03-01" },
+		});
+		parser.setDefaultResult(doc);
+
+		const result = await ingestDocument(ctx, parser, filePath, config);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+
+		const nw = await getCurrentNetWorth(ctx.db);
+		expect(nw.ok).toBe(true);
+		if (!nw.ok) return;
+
+		expect(nw.value.netWorth).toBe(5000);
+		expect(nw.value.components.savings).toBe(5000);
+	});
+
+	it("I16: dry-run with balance does not create snapshot", async () => {
+		const doc = makeParsedDocument({
+			balance: { amount: 1000, asOf: "2026-03-01" },
+		});
+		parser.setDefaultResult(doc);
+
+		const result = await ingestDocument(ctx, parser, filePath, config, { dryRun: true });
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+
+		expect(result.value.snapshotsUpserted).toBe(0);
+
+		const snapRows = ctx.db.select().from(snapshots).all();
+		expect(snapRows.length).toBe(0);
 	});
 });

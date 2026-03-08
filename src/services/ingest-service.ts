@@ -29,6 +29,7 @@ import type {
 } from "../providers/types.js";
 import { findAccountByExternalId, upsertAccount } from "./account-service.js";
 import { getCurrentNetWorth } from "./networth-service.js";
+import { upsertSnapshot } from "./snapshot-service.js";
 import { createTransaction, getExistingDebitsForDedup } from "./transaction-service.js";
 
 // === Types ===
@@ -237,6 +238,21 @@ export async function ingestDocument(
 
 	const account = accountResult.value;
 
+	// Step 8.5: Upsert balance snapshot (if parser extracted balance data)
+	let snapshotsUpserted = 0;
+	if (parsed.balance && !options?.dryRun) {
+		const snapResult = await upsertSnapshot(ctx.db, {
+			accountId: account.id,
+			date: parsed.balance.asOf,
+			balance: parsed.balance.amount,
+			syncRunId,
+		});
+		if (snapResult.ok) {
+			snapshotsUpserted = 1;
+			summaryNotes.push(`Balance snapshot: $${parsed.balance.amount.toFixed(2)} as of ${parsed.balance.asOf}`);
+		}
+	}
+
 	// Step 9: Update accountId on all transactions
 	const transactions: RawTransaction[] = filteredTransactions.map((tx) => ({
 		...tx,
@@ -380,7 +396,7 @@ export async function ingestDocument(
 					transactionsCreated,
 					transactionsExcluded: excluded.length,
 					transactionsSkipped,
-					snapshotsCreated: 0,
+					snapshotsCreated: snapshotsUpserted,
 				})
 				.where(eq(syncRuns.id, syncRunId))
 				.run();
@@ -416,7 +432,7 @@ export async function ingestDocument(
 				transactionsCreated,
 				transactionsExcluded: excluded.length,
 				transactionsSkipped,
-				snapshotsUpserted: 0,
+				snapshotsUpserted,
 			},
 		};
 
@@ -436,7 +452,7 @@ export async function ingestDocument(
 		transactionsExcluded: excluded.length,
 		transactionsDeduplicated,
 		transactionsSkipped,
-		snapshotsUpserted: 0,
+		snapshotsUpserted,
 		netWorth,
 		status: "success" as SyncStatus,
 		duration: Date.now() - startTime,

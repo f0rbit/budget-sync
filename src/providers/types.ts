@@ -193,6 +193,8 @@ export interface ParsedDocument {
 		institution?: string;
 		type?: AccountType;
 	};
+	/** Statement/closing balance extracted from document */
+	balance?: { amount: number; asOf: string };
 	/** Confidence scores or notes from the AI about ambiguous entries */
 	notes?: string[];
 	/** Raw AI response for debugging/auditing */

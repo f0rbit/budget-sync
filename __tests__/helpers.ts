@@ -163,6 +163,7 @@ export function makeParsedDocument(overrides?: Partial<ParsedDocument>): ParsedD
 			institution: "BankSA",
 			type: "transaction",
 		},
+		balance: overrides?.balance,
 		notes: overrides?.notes ?? [],
 		rawResponse: overrides?.rawResponse ?? '{"test": "response"}',
 	};

@@ -45,6 +45,14 @@ export class CsvDocumentParser implements DocumentParser {
 			}
 		}
 
+		const latestDate =
+			transactions.length > 0
+				? transactions
+						.map((t) => t.transactionDate)
+						.sort()
+						.reverse()[0]
+				: new Date().toISOString().slice(0, 10);
+
 		return ok({
 			transactions,
 			account: {
@@ -52,7 +60,8 @@ export class CsvDocumentParser implements DocumentParser {
 				institution: "CSV Import",
 				type: accountType,
 			},
-			notes: latestBalance !== undefined ? [`Latest balance: $${latestBalance.toFixed(2)}`] : [],
+			balance: latestBalance !== undefined && latestDate ? { amount: latestBalance, asOf: latestDate } : undefined,
+			notes: [],
 		});
 	}
 }

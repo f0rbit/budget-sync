@@ -26,7 +26,11 @@ Return valid JSON matching this schema:
     "institution": "bank name if identifiable",
     "type": "transaction" | "savings" | "credit"
   },
-  "notes": ["any ambiguities or issues encountered"]
+  "notes": ["any ambiguities or issues encountered"],
+  "statementBalance": {
+    "amount": 1234.56,
+    "asOf": "YYYY-MM-DD"
+  }
 }
 
 Rules:
@@ -34,7 +38,9 @@ Rules:
 - Convert all dates to YYYY-MM-DD format
 - Include ALL transactions found in the document
 - Do NOT infer or assign categories
-- Preserve the exact bank description text as-is`;
+- Preserve the exact bank description text as-is
+- Extract the statement closing balance or account balance if shown in the document
+- For credit cards, the statement balance is the total amount owed`;
 
 const aiResponseSchema = z.object({
 	transactions: z.array(
@@ -53,6 +59,12 @@ const aiResponseSchema = z.object({
 		})
 		.optional(),
 	notes: z.array(z.string()).optional(),
+	statementBalance: z
+		.object({
+			amount: z.number(),
+			asOf: z.string(),
+		})
+		.optional(),
 });
 
 function extractJson(text: string): string {
@@ -185,6 +197,9 @@ export class AnthropicDocumentParser implements DocumentParser {
 		return ok({
 			transactions,
 			account: data.account,
+			balance: data.statementBalance
+				? { amount: data.statementBalance.amount, asOf: data.statementBalance.asOf }
+				: undefined,
 			notes: data.notes,
 			rawResponse: rawText,
 		});

@@ -168,6 +168,13 @@ export const aiParseResultSnapshotSchema = z.object({
 		.optional(),
 	/** Notes about ambiguities or issues */
 	notes: z.array(z.string()).optional(),
+	/** Balance extracted from document */
+	balance: z
+		.object({
+			amount: z.number(),
+			asOf: z.string(),
+		})
+		.optional(),
 	/** Raw AI response for auditing */
 	rawResponse: z.string().optional(),
 });
