@@ -31,11 +31,10 @@ budget-sync/
     config.ts                         -- Zod schemas + loadConfig() / getAnthropicApiKey()
     errors.ts                         -- Discriminated union error types + constructor helpers
     commands/
-      ingest.ts                       -- `budget ingest` command (AI document ingestion)
+      ingest.ts                       -- `budget ingest` command (AI document ingestion, no default account-type)
       accounts.ts                     -- `budget-sync accounts` command handler
       mappings.ts                     -- `budget-sync mappings` command handler
       export.ts                       -- `budget-sync export` command handler
-      snapshot.ts                       -- `budget-sync snapshot` command handler
       networth.ts                       -- `budget-sync networth` command handler
       super.ts                          -- `budget-sync super` command handler (balance, contributions, import)
       transactions.ts                   -- `budget-sync transactions` command handler (list, summary, search)
@@ -49,13 +48,12 @@ budget-sync/
       client.ts                       -- createDb(path), createTestDb(), AppContext { db, corpus }
     providers/
       types.ts                        -- BankProvider interface, SuperProvider interface, DocumentParser interface, value types (RawTransaction, CategorizedTransaction, SuperBalance, SuperContribution, etc.), enum arrays (CATEGORIES, ACCOUNT_TYPES, CONTRIBUTION_TYPES, etc.), InvestmentProvider (forward-compat)
-      index.ts                        -- createProvider(config) factory, re-exports all provider classes
+      index.ts                        -- createDocumentParser() and createAiCategorizer() factories, re-exports all provider classes
       utils.ts                        -- generateExternalId() utility
       ai/
         parser.ts                     -- AnthropicDocumentParser: Claude API document parsing
         categorizer.ts                -- AnthropicAiCategorizer: Claude API batch categorization
       csv/
-        provider.ts                   -- CsvBankProvider: parses DD/MM/YYYY CSV, generates sha256 external IDs
         document-parser.ts            -- CsvDocumentParser: CSV adapter for unified ingestDocument() pipeline
       in-memory/
         provider.ts                   -- InMemoryBankProvider: arrays + fail flags for testing
@@ -66,12 +64,13 @@ budget-sync/
         provider.ts                   -- ManualSuperProvider: JSON file import
     pipeline/
       categorizer.ts                  -- categorizePipeline(tx, context), categorizeAll(txs, context) with AI batch step
+      dedup.ts                        -- detectCrossAccountDuplicates(): cross-account duplicate detection
       filter.ts                       -- filterTransaction(tx, exclusions) -> Result<RawTransaction, ExcludedTransaction>
       rent.ts                         -- isRentTransaction(), calculateRentAmount(), handleRent()
       local-mappings.ts               -- loadMappings(path?), matchTransaction(), applyMapping(), appendMappings()
       fallback.ts                     -- createFallback()
     services/
-      ingest-service.ts               -- 14-step document ingestion orchestrator
+      ingest-service.ts               -- 17-step document ingestion orchestrator
       account-service.ts              -- upsertAccount(), listAccounts(), deactivateAccount(), findAccountByExternalId()
       transaction-service.ts          -- createTransaction(), getTransactions(filters), getUncategorized(), searchTransactions(), getCategorySummary()
       export-service.ts               -- exportToObsidian(db, vaultPath, budgetDir, options)
@@ -81,14 +80,15 @@ budget-sync/
       super-sync-service.ts             -- syncSuper() import orchestrator
   __tests__/
     integration/                      -- Integration tests (in-memory DB + corpus)
-      ingest-workflow.test.ts           -- Ingest pipeline integration tests
+      ingest-workflow.test.ts           -- Ingest pipeline integration tests (dedup + balance)
       ai-categorization.test.ts         -- AI categorization pipeline integration tests
       transactions-cli.test.ts          -- Transactions CLI command tests
-      snapshot.test.ts                  -- Snapshot service + sync integration (10 scenarios)
+      snapshot.test.ts                  -- Snapshot service integration (6 scenarios)
       networth.test.ts                  -- Net worth calculation tests (8 scenarios, includes super)
       super-import.test.ts              -- Super import integration tests (11 scenarios)
       super-networth.test.ts            -- Super net worth tests (5 scenarios)
     unit/                             -- Unit tests (pure functions)
+      dedup.test.ts                     -- Cross-account duplicate detection unit tests
   drizzle/                            -- Generated migrations (never hand-edit)
   config.example.jsonc                -- Example config (committed)
   config.schema.json                  -- JSON Schema for config.jsonc
@@ -181,10 +181,7 @@ Implementations:
 
 | Class | Module | Purpose |
 |-------|--------|---------|
-| `CsvBankProvider` | `src/providers/csv/provider.ts` | Manual CSV import (DD/MM/YYYY format, sha256 IDs) |
 | `InMemoryBankProvider` | `src/providers/in-memory/provider.ts` | Testing: arrays + `failNextAuth`/`failNextFetch`/`failNextBalances` flags |
-
-Factory: `createProvider(config, options?) -> Result<BankProvider, ConfigError>` in `src/providers/index.ts` switches on `config.provider` (`"csv"` | `"manual"`).
 
 `SuperProvider` is now implemented (M2 complete). Forward-compatible interface: `InvestmentProvider` (M3).
 
@@ -226,6 +223,11 @@ Implementations:
 | `CsvDocumentParser` | `src/providers/csv/document-parser.ts` | CSV adapter: auto-detected by extension, structured parse without AI |
 | `InMemoryDocumentParser` | `src/providers/in-memory/document-parser.ts` | Testing: canned responses + fail flags |
 
+`ParsedDocument` has an optional `balance?: { amount: number; asOf: string }` field. When present, `ingestDocument()` calls `upsertSnapshot()` to create a balance snapshot for the account.
+
+- `CsvDocumentParser`: Extracts balance from column 5 if present, using latest transaction date as `asOf`
+- `AnthropicDocumentParser`: AI prompt requests `statementBalance` from documents
+
 ### AI Categorizer
 
 `AiCategorizer` interface in `src/providers/types.ts`:
@@ -264,9 +266,19 @@ Batch function: `categorizeAll(transactions, context)` returns `{ categorized: C
 
 Auto-mapping: AI categorization suggests merchant mappings which are auto-appended to `merchant-mappings.jsonc` via `appendMappings()` using `jsonc-parser` `modify()`/`applyEdits()`. This preserves JSONC comments and makes the system self-improving over time.
 
+### Cross-Account Dedup
+
+`detectCrossAccountDuplicates()` in `src/pipeline/dedup.ts` identifies the same purchase appearing in multiple account statements (e.g., credit card charge + savings repayment).
+
+Matching criteria: exact amount + exact item (case-insensitive) + date within 5 days + different accounts.
+
+Priority: credit(3) > transaction(2) > savings(1). Lower-priority duplicates are excluded.
+
+Wired into `ingestDocument()` at Step 10.7 — runs after categorization, before materialization.
+
 ### Ingest Orchestration
 
-`ingestDocument()` in `src/services/ingest-service.ts` -- 14-step process:
+`ingestDocument()` in `src/services/ingest-service.ts` -- 17-step process:
 
 1. Create `sync_runs` row (cuid2 ID)
 2. Read document from filesystem (PDF, CSV, image, text)
@@ -276,8 +288,10 @@ Auto-mapping: AI categorization suggests merchant mappings which are auto-append
 6. Parser: send document to Claude API for extraction (or CSV parser: structured parse)
 7. Snapshot parse results to `ai-parse-results` corpus store (with parent → raw-documents)
 8. Resolve account (from `--account` flag or AI-extracted account info) → upsert into SQLite
+8.5. Upsert balance snapshot if `parsed.balance` is present
 9. Snapshot raw transactions to `raw-transactions` corpus store
 10. Run categorization pipeline (`categorizeAll`) — includes AI batch categorization step
+10.7. Cross-account dedup: detect same purchase across multiple accounts, mark lower-priority duplicates
 11. Snapshot AI categorization results to `ai-categorization-results` corpus store (if AI was used)
 12. Snapshot sync results to `sync-results` corpus store (with parent → ai-categorization-results or ai-parse-results)
 13. Materialize categorized transactions into SQLite (skip in dry-run, dedup by external_id)
@@ -357,13 +371,12 @@ CONTRIBUTION_TYPES = ["employer", "salary_sacrifice", "voluntary", "fhss", "gove
 2. Fields: `match` (substring), `item` (display name), `category` (from CATEGORIES), `extractLocation?` (boolean)
 3. Run tests to verify: `bun test`
 
-### Adding a new provider
+### Adding a new document parser or categorizer
 
-1. Implement `BankProvider` interface in `src/providers/<name>/provider.ts`
-2. Add in-memory variant for testing (or use `InMemoryBankProvider`)
-3. Add case to `createProvider()` switch in `src/providers/index.ts`
-4. Add provider name to `configSchema.provider` enum in `src/config.ts`
-5. Re-export from `src/providers/index.ts`
+1. Implement `DocumentParser` or `AiCategorizer` interface in `src/providers/<name>/`
+2. Add in-memory variant for testing
+3. Add case to `createDocumentParser()` or `createAiCategorizer()` in `src/providers/index.ts`
+4. Re-export from `src/providers/index.ts`
 
 ### Adding a new CLI command
 
@@ -408,7 +421,6 @@ bun run dev -- ingest bank-statement.pdf --dry-run --verbose
 bun run dev -- accounts
 bun run dev -- export
 bun run dev -- mappings
-bun run dev -- snapshot
 bun run dev -- networth
 bun run dev -- networth --history --format csv
 bun run dev -- super balance
@@ -447,14 +459,16 @@ bun run dev -- transactions search <query> [--limit N]
 - CSV fast path removed — all files go through unified `ingestDocument()` pipeline; CSV auto-detected by extension
 - `InMemoryAiCategorizer` auto-generates suggested mappings from categorization results if none explicitly configured
 - Real `merchant-mappings.jsonc` on disk may be modified by AI auto-mapping — tests should use isolated temp files or injected mappings
+- Removing WAL/SHM files from a SQLite WAL-mode database can lose uncommitted data — never delete these while the DB might have pending writes
+- Cross-account dedup runs on ALL existing transactions in the DB, not just the current ingest batch — this means re-ingesting after adding a new account catches cross-account dupes retroactively
+- `--account-type` CLI option has no default — when omitted, the AI-inferred type is used, falling back to 'transaction' only if AI doesn't infer a type
 
 ## M1: Snapshots + Net Worth
 
-- `bun run dev -- snapshot` — capture current balances without full sync
 - `bun run dev -- networth` — show current net worth breakdown
 - `bun run dev -- networth --history --format csv` — net worth over time
 - Snapshots table: unique constraint on (account_id, date) — upserts on conflict
-- Net worth formula: `savings + transaction - credit` (super/investments added in M2/M3)
+- Net worth formula: `savings + transaction + super - credit` (investments added in M3)
 - `config.sync.auto_snapshot` (default true) controls whether sync materializes balances
 - Carry-forward: net worth history uses last-known balance for accounts without a snapshot on a given date
 - Service functions receive `AppDatabase`, not `AppContext` (they don't need corpus access)
@@ -471,9 +485,9 @@ bun run dev -- transactions search <query> [--limit N]
 - Contribution dedup: check-before-insert on (accountId, date, type, amount) — no unique constraint
 - `computeNetWorth` includes super balances; `NetWorthBreakdown.components` has `super` field
 - `super` keyword is valid as a TS property name in object literals and interfaces
-- Services use `computeNetWorth()` which sums: savings + transaction - credit + super
+- Services use `computeNetWorth()` which sums: savings + transaction + super - credit
 - 98 tests passing across 12 files after M2
-- 190 tests across ~20 files after AI Categorization + CLI feature
+- 195 tests across ~20 files after AI Categorization + CLI + Dedup + Balance features
 
 ## Pivot: Basiq → AI Ingestion
 

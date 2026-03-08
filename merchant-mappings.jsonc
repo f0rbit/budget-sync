@@ -275,6 +275,11 @@
 			"match": "PAYPAL AUSTRALIA",
 			"item": "PayPal transaction",
 			"category": "Other"
+		},
+		{
+			"match": "BEEM\\",
+			"item": "Beem payment",
+			"category": "Other"
 		}
 	],
 
