@@ -139,8 +139,7 @@ export const snapshots = sqliteTable(
 	],
 );
 
-// === holdings (M3 — table created now, populated later) ===
-// TODO: Populate in M3 Investment Tracking
+// === holdings (M3 — Investment Tracking, not yet started) ===
 
 export const holdings = sqliteTable(
 	"holdings",
@@ -166,8 +165,7 @@ export const holdings = sqliteTable(
 	(table) => [index("holdings_ticker_date_idx").on(table.ticker, table.date)],
 );
 
-// === contributions (M2 — table created now, populated later) ===
-// TODO: Populate in M2 Super Integration
+// === contributions (M2 — Super Integration, complete) ===
 
 export const contributions = sqliteTable("contributions", {
 	id: text("id")
