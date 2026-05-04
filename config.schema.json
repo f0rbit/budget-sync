@@ -69,7 +69,6 @@
 			"required": [
 				"solo_start_date",
 				"solo_weekly_amount",
-				"shared_roommate_contribution",
 				"landlord_patterns",
 				"debit_rent_patterns"
 			],

@@ -46,7 +46,9 @@ export function handleRent(tx: RawTransaction, config: RentConfig): CategorizedT
 		category: "Rent",
 		notes: is_solo
 			? `Solo rent: $${config.solo_weekly_amount}/week`
-			: `Shared rent: $${tx.amount} - $${config.shared_roommate_contribution} roommate contribution`,
+			: config.shared_roommate_contribution === 0
+				? `Solo rent: $${tx.amount}`
+				: `Shared rent: $${tx.amount} - $${config.shared_roommate_contribution} roommate contribution`,
 		excluded: false,
 		accountId: tx.accountId,
 	};

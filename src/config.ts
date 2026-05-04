@@ -10,7 +10,7 @@ import { type ConfigError, errors } from "./errors.js";
 export const rentConfigSchema = z.object({
 	solo_start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Must be YYYY-MM-DD"),
 	solo_weekly_amount: z.number().positive(),
-	shared_roommate_contribution: z.number().nonnegative(),
+	shared_roommate_contribution: z.number().nonnegative().optional().default(0),
 	landlord_patterns: z.array(z.string()),
 	debit_rent_patterns: z.array(z.string()),
 });
