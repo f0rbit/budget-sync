@@ -280,6 +280,351 @@
 			"match": "BEEM\\",
 			"item": "Beem payment",
 			"category": "Other"
+		},
+		{
+			"match": "SP VYTADOSE",
+			"item": "Vytadose supplement",
+			"category": "Health"
+		},
+		{
+			"match": "PAYPAL *DISNEYPLUS",
+			"item": "Disney Plus",
+			"category": "Subscriptions"
+		},
+		{
+			"match": "PAYPAL *HBOMAX",
+			"item": "HBO Max",
+			"category": "Subscriptions"
+		},
+		{
+			"match": "DEFT REAL ESTATE",
+			"item": "Rent",
+			"category": "Rent"
+		},
+		{
+			"match": "SP BILLIE EILISH",
+			"item": "Billie Eilish concert",
+			"category": "Entertainment"
+		},
+		{
+			"match": "AMAZON MARKETPLACE",
+			"item": "Amazon purchase",
+			"category": "Shopping"
+		},
+		{
+			"match": "AMAZON RETA*",
+			"item": "Amazon purchase",
+			"category": "Shopping"
+		},
+		{
+			"match": "PAYPAL *MYERPTYLTD",
+			"item": "Myer",
+			"category": "Shopping"
+		},
+		{
+			"match": "WWW.SANCHURRO.COM",
+			"item": "San Churro",
+			"category": "Eating Out"
+		},
+		{
+			"match": "PAYPAL *TEMPLWEBSTR",
+			"item": "Temple & Webster",
+			"category": "Shopping"
+		},
+		{
+			"match": "TEMPLEANDWEBSTER",
+			"item": "Temple & Webster",
+			"category": "Shopping"
+		},
+		{
+			"match": "CHICKEN OF RO",
+			"item": "Chicken of Ro",
+			"category": "Eating Out"
+		},
+		{
+			"match": "GLOBAL ENTERTAINMENT",
+			"item": "Global Entertainment",
+			"category": "Entertainment"
+		},
+		{
+			"match": "YOYO ENTERTAINMENT",
+			"item": "Yoyo Entertainment",
+			"category": "Entertainment"
+		},
+		{
+			"match": "WINGHAS BY BAVARIAN",
+			"item": "Winghaus by Bavarian Bier",
+			"category": "Alcohol"
+		},
+		{
+			"match": "SQ *SHIRO GELATO",
+			"item": "Shiro Gelato",
+			"category": "Eating Out"
+		},
+		{
+			"match": "PAYPAL *ETSYIRELAND",
+			"item": "Etsy purchase",
+			"category": "Shopping"
+		},
+		{
+			"match": "PAYPAL *IKEA AU",
+			"item": "IKEA",
+			"category": "Shopping"
+		},
+		{
+			"match": "ORIGIN BROADBAND",
+			"item": "Origin Broadband",
+			"category": "Bills"
+		},
+		{
+			"match": "VICTORIA'S BASEMENT",
+			"item": "Victoria's Basement",
+			"category": "Shopping"
+		},
+		{
+			"match": "SOUTHBANK PHARMACY",
+			"item": "Southbank Pharmacy",
+			"category": "Health"
+		},
+		{
+			"match": "ZEUS STREET GREEK",
+			"item": "Zeus Street Greek",
+			"category": "Eating Out"
+		},
+		{
+			"match": "EAT STREET NORTHSHORE",
+			"item": "Eat Street Northshore",
+			"category": "Eating Out"
+		},
+		{
+			"match": "DESTINATION BRISBANE",
+			"item": "Destination Brisbane",
+			"category": "Entertainment"
+		},
+		{
+			"match": "WWW.TIPPLERSTAP.COM.AU",
+			"item": "Tipplers Tap",
+			"category": "Alcohol"
+		},
+		{
+			"match": "SQ *PIZZA & PASTA",
+			"item": "Pizza & Pasta",
+			"category": "Eating Out"
+		},
+		{
+			"match": "SQ *RETRO SHOP EAT ST",
+			"item": "Retro Shop Eat St",
+			"category": "Shopping"
+		},
+		{
+			"match": "SQ *FLOAT",
+			"item": "Float",
+			"category": "Eating Out"
+		},
+		{
+			"match": "ENTRANCE GATES",
+			"item": "Entrance Gates",
+			"category": "Transport"
+		},
+		{
+			"match": "SQ *C'EST DU GATEAU",
+			"item": "C'est Du Gateau",
+			"category": "Eating Out"
+		},
+		{
+			"match": "MAPPINS NURSERY",
+			"item": "Mappins Nursery",
+			"category": "Shopping"
+		},
+		{
+			"match": "AUSTRALIA ZOO",
+			"item": "Australia Zoo",
+			"category": "Entertainment"
+		},
+		{
+			"match": "FELONS BREWING CO",
+			"item": "Felons Brewing Co",
+			"category": "Alcohol"
+		},
+		{
+			"match": "SQ *BLACKSTAR COFFEE",
+			"item": "Blackstar Coffee Roasters",
+			"category": "Eating Out"
+		},
+		{
+			"match": "RAMSAY PHARMACY",
+			"item": "Ramsay Pharmacy",
+			"category": "Health"
+		},
+		{
+			"match": "BIG W",
+			"item": "Big W",
+			"category": "Shopping"
+		},
+		{
+			"match": "SUPERFLY PIZZA",
+			"item": "Superfly Pizza",
+			"category": "Eating Out"
+		},
+		{
+			"match": "HARRIS FARM MARKETS",
+			"item": "Harris Farm Markets",
+			"category": "Eating Out"
+		},
+		{
+			"match": "PAYPAL *BIG W",
+			"item": "Big W",
+			"category": "Shopping"
+		},
+		{
+			"match": "WW METRO",
+			"item": "Woolworths Metro",
+			"category": "Woolworths"
+		},
+		{
+			"match": "HARVEY NORMAN",
+			"item": "Harvey Norman",
+			"category": "Shopping"
+		},
+		{
+			"match": "PAYPAL *KITCHENWARE",
+			"item": "Kitchenware",
+			"category": "Shopping"
+		},
+		{
+			"match": "JACARANDA COFFEE LANE",
+			"item": "Jacaranda Coffee Lane",
+			"category": "Eating Out"
+		},
+		{
+			"match": "PAYPAL *LAHAPTYLTDT",
+			"item": "Laha Pty Ltd",
+			"category": "Other"
+		},
+		{
+			"match": "SQ *SWIRLME",
+			"item": "Swirl Me",
+			"category": "Eating Out"
+		},
+		{
+			"match": "BREADTOP",
+			"item": "Breadtop",
+			"category": "Eating Out"
+		},
+		{
+			"match": "SQ *RIVERSIDE CAFE",
+			"item": "Riverside Cafe & Bar",
+			"category": "Eating Out"
+		},
+		{
+			"match": "MIND GAMES BRISBANE",
+			"item": "Mind Games Brisbane",
+			"category": "Entertainment"
+		},
+		{
+			"match": "CARD BOT",
+			"item": "Card Bot",
+			"category": "Entertainment"
+		},
+		{
+			"match": "PAYPAL *DAVIDJONESL",
+			"item": "David Jones",
+			"category": "Shopping"
+		},
+		{
+			"match": "CRITERION TAVERN",
+			"item": "Criterion Tavern",
+			"category": "Alcohol"
+		},
+		{
+			"match": "DR MARTENS",
+			"item": "Dr Martens",
+			"category": "Shopping"
+		},
+		{
+			"match": "WECUBE REMOVALS",
+			"item": "Wecube Removals",
+			"category": "Other"
+		},
+		{
+			"match": "KITCHEN WAREHOUSE",
+			"item": "Kitchen Warehouse",
+			"category": "Shopping"
+		},
+		{
+			"match": "MINI 7 DAYS PTY LTD",
+			"item": "Mini 7 Days",
+			"category": "Eating Out"
+		},
+		{
+			"match": "ITALIAN STREET KITCHEN",
+			"item": "Italian Street Kitchen",
+			"category": "Eating Out"
+		},
+		{
+			"match": "IKEA LOGAN",
+			"item": "IKEA Logan",
+			"category": "Shopping"
+		},
+		{
+			"match": "WWW.SUPERT* NYC BAGEL",
+			"item": "NYC Bagel",
+			"category": "Eating Out"
+		},
+		{
+			"match": "SQ *MITSUKI KATSU",
+			"item": "Mitsuki Katsu",
+			"category": "Eating Out"
+		},
+		{
+			"match": "TERRYWHITE CHEM",
+			"item": "TerryWhite Chemmart",
+			"category": "Health"
+		},
+		{
+			"match": "PALACE CINEMAS",
+			"item": "Palace Cinemas",
+			"category": "Entertainment"
+		},
+		{
+			"match": "PALACE CINEMA JAMES ST",
+			"item": "Palace Cinema James St",
+			"category": "Entertainment"
+		},
+		{
+			"match": "QANTAS AIR",
+			"item": "Qantas",
+			"category": "Transport"
+		},
+		{
+			"match": "SULZIP",
+			"item": "Sulzip",
+			"category": "Eating Out"
+		},
+		{
+			"match": "DYNAMITE KARAOKE",
+			"item": "Dynamite Karaoke Bar",
+			"category": "Entertainment"
+		},
+		{
+			"match": "TICKETS*CODE OF CO",
+			"item": "Code of Comedy",
+			"category": "Entertainment"
+		},
+		{
+			"match": "CONCENTRIX SERVICES",
+			"item": "Concentrix Services",
+			"category": "Other"
+		},
+		{
+			"match": "SQ *THE GUNSHOP CAFE",
+			"item": "The Gunshop Cafe",
+			"category": "Eating Out"
+		},
+		{
+			"match": "WESTEND VIETNAMESE FOO",
+			"item": "West End Vietnamese Food",
+			"category": "Eating Out"
 		}
 	],
 
