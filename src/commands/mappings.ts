@@ -2,7 +2,8 @@ import { Command } from "commander";
 import { loadConfig } from "../config.js";
 import { createDb } from "../db/client.js";
 import { loadMappings } from "../pipeline/local-mappings.js";
-import { getUncategorized } from "../services/transaction-service.js";
+import { applyMappingsPlan, planMappingsApply } from "../services/mapping-apply-service.js";
+import { getTransactions, getUncategorized } from "../services/transaction-service.js";
 
 export const mappingsCommand = new Command("mappings").description("Manage merchant categorization mappings");
 
@@ -90,4 +91,72 @@ mappingsCommand
 			console.log(`  ${tx.date}  $${tx.amount.toFixed(2).padStart(8)}  ${tx.rawDescription}`);
 		}
 		console.log(`\n${result.value.length} transaction(s) need mapping`);
+	});
+
+mappingsCommand
+	.command("apply")
+	.description("Re-run local mappings + exclusion rules over existing transactions (no re-ingest)")
+	.option("--dry-run", "Show what would change without writing to the database", false)
+	.option("--force", "Recategorize even if current category isn't 'Other'", false)
+	.action(async (options) => {
+		const configResult = loadConfig();
+		if (!configResult.ok) {
+			console.error(`Config error: ${configResult.error.code}`);
+			process.exit(1);
+		}
+		const mappingsResult = loadMappings();
+		if (!mappingsResult.ok) {
+			console.error(`Error: ${mappingsResult.error.message}`);
+			process.exit(1);
+		}
+		const db = createDb(configResult.value.db_path);
+
+		const rowsResult = await getTransactions(db);
+		if (!rowsResult.ok) {
+			console.error(`Error: ${rowsResult.error.message}`);
+			process.exit(1);
+		}
+
+		const { mappings, exclusions } = mappingsResult.value;
+		const plan = planMappingsApply(rowsResult.value, mappings, exclusions, { force: options.force });
+
+		const excludedChanges = plan.changes.filter((c) => c.type === "excluded");
+		const recategorizedChanges = plan.changes.filter((c) => c.type === "recategorized");
+
+		console.log(`Scanned ${plan.scanned} transaction(s)`);
+
+		if (excludedChanges.length > 0) {
+			console.log("\nTo be excluded:");
+			for (const c of excludedChanges) {
+				console.log(`  ${c.row.date}  $${c.row.amount.toFixed(2).padStart(8)}  ${c.row.rawDescription} — ${c.reason}`);
+			}
+		}
+
+		if (recategorizedChanges.length > 0) {
+			console.log("\nTo be recategorized:");
+			for (const c of recategorizedChanges) {
+				console.log(
+					`  ${c.row.date}  $${c.row.amount.toFixed(2).padStart(8)}  ${c.row.rawDescription} — [${c.row.category} → ${c.category}] "${c.row.item}" → "${c.item}"`,
+				);
+			}
+		}
+
+		console.log(`\n${excludedChanges.length} excluded, ${recategorizedChanges.length} recategorized`);
+
+		if (options.dryRun) {
+			console.log("(dry run — no changes written)");
+			return;
+		}
+
+		if (plan.changes.length === 0) {
+			return;
+		}
+
+		const applyResult = await applyMappingsPlan(db, plan);
+		if (!applyResult.ok) {
+			console.error(`Error: ${applyResult.error.message}`);
+			process.exit(1);
+		}
+
+		console.log("Applied.");
 	});

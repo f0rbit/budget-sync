@@ -3,6 +3,17 @@ import type { ExcludedTransaction, ExclusionRule, RawTransaction } from "../prov
 
 export type FilterResult = Result<RawTransaction, ExcludedTransaction>;
 
+/** Returns the first exclusion rule whose pattern matches the description, or null. */
+export function matchExclusionRule(description: string, exclusions: ExclusionRule[]): ExclusionRule | null {
+	for (const rule of exclusions) {
+		const regex = new RegExp(rule.match, "i");
+		if (regex.test(description)) {
+			return rule;
+		}
+	}
+	return null;
+}
+
 export function filterTransaction(tx: RawTransaction, exclusions: ExclusionRule[]): FilterResult {
 	if (tx.direction === "credit") {
 		return err({
@@ -14,17 +25,15 @@ export function filterTransaction(tx: RawTransaction, exclusions: ExclusionRule[
 		});
 	}
 
-	for (const rule of exclusions) {
-		const regex = new RegExp(rule.match, "i");
-		if (regex.test(tx.description)) {
-			return err({
-				externalId: tx.id,
-				rawDescription: tx.description,
-				amount: tx.amount,
-				direction: tx.direction,
-				reason: rule.reason,
-			});
-		}
+	const rule = matchExclusionRule(tx.description, exclusions);
+	if (rule) {
+		return err({
+			externalId: tx.id,
+			rawDescription: tx.description,
+			amount: tx.amount,
+			direction: tx.direction,
+			reason: rule.reason,
+		});
 	}
 
 	return ok(tx);

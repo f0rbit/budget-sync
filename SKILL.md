@@ -32,12 +32,12 @@ budget-sync/
     errors.ts                         -- Discriminated union error types + constructor helpers
     commands/
       ingest.ts                       -- `budget ingest` command (AI document ingestion, no default account-type)
-      accounts.ts                     -- `budget-sync accounts` command handler
-      mappings.ts                     -- `budget-sync mappings` command handler
+      accounts.ts                     -- `budget-sync accounts` command handler (list, deactivate, merge)
+      mappings.ts                     -- `budget-sync mappings` command handler (list, search, unmapped, apply)
       export.ts                       -- `budget-sync export` command handler
       networth.ts                       -- `budget-sync networth` command handler
       super.ts                          -- `budget-sync super` command handler (balance, contributions, import)
-      transactions.ts                   -- `budget-sync transactions` command handler (list, summary, search)
+      transactions.ts                   -- `budget-sync transactions` command handler (list, summary, search, set)
     corpus/
       index.ts                        -- Barrel: re-exports AppCorpus, stores, snapshot types
       client.ts                       -- buildCorpus(), createCorpus(dataDir), createTestCorpus()
@@ -72,7 +72,8 @@ budget-sync/
     services/
       ingest-service.ts               -- 17-step document ingestion orchestrator
       account-service.ts              -- upsertAccount(), listAccounts(), deactivateAccount(), findAccountByExternalId()
-      transaction-service.ts          -- createTransaction(), getTransactions(filters), getUncategorized(), searchTransactions(), getCategorySummary()
+      transaction-service.ts          -- createTransaction(), getTransactions(filters), getUncategorized(), searchTransactions(), getCategorySummary(), selectTransactions(), updateTransactions()
+      mapping-apply-service.ts          -- planMappingsApply()/applyMappingsPlan(): re-run mappings+exclusions over existing SQLite rows
       export-service.ts               -- exportToObsidian(db, vaultPath, budgetDir, options)
       snapshot-service.ts               -- upsertSnapshot(), getLatestSnapshots(), getSnapshotHistory()
       networth-service.ts               -- getCurrentNetWorth(), getNetWorthHistory() with carry-forward
@@ -342,7 +343,7 @@ Canonical enum arrays defined in `src/providers/types.ts`:
 ```ts
 ACCOUNT_TYPES = ["transaction", "savings", "credit", "super", "investment"]
 TRANSACTION_DIRECTIONS = ["debit", "credit"]
-CATEGORIES = ["Rent", "Woolworths", "Eating Out", "Alcohol", "Subscriptions", "Transport", "Bills", "Health", "Entertainment", "Shopping", "Other"]
+CATEGORIES = ["Rent", "Woolworths", "Eating Out", "Alcohol", "Subscriptions", "Transport", "Bills", "Health", "Entertainment", "Shopping", "Travel", "Other"]
 SYNC_STATUSES = ["success", "partial", "failed"]
 CONTRIBUTION_TYPES = ["employer", "salary_sacrifice", "voluntary", "fhss", "government"]
 ```
@@ -361,6 +362,7 @@ CONTRIBUTION_TYPES = ["employer", "salary_sacrifice", "voluntary", "fhss", "gove
 | Health | Pharmacy, doctor, health insurance, fitness |
 | Entertainment | Movies, music, arts |
 | Shopping | Clothing, electronics, home goods |
+| Travel | Flights, accommodation, travel insurance, passports/visas, overseas trip spending |
 | Other | Fallback for uncategorized transactions |
 
 ## Common Tasks
@@ -370,6 +372,12 @@ CONTRIBUTION_TYPES = ["employer", "salary_sacrifice", "voluntary", "fhss", "gove
 1. Add entry to `merchant-mappings.jsonc` under `mappings` array
 2. Fields: `match` (substring), `item` (display name), `category` (from CATEGORIES), `extractLocation?` (boolean)
 3. Run tests to verify: `bun test`
+4. Optionally re-run `mappings apply --dry-run` to see which already-ingested "Other" rows the new mapping would fix, then without `--dry-run` to apply
+
+### Cleaning up already-ingested transactions
+
+- `mappings apply [--dry-run] [--force]` re-runs `merchant-mappings.jsonc` mappings + exclusion rules over existing SQLite rows (no re-ingest). Exclusion rules always win; mapping recategorization only touches rows currently in `Other` unless `--force`
+- `transactions set <id...> --category <c> [--item <s>] [--notes <s>]` for one-off manual edits; `--match <substring> --from <date> --to <date>` is an alternative selector to explicit ids. Refuses to run with no selector
 
 ### Adding a new document parser or categorizer
 
@@ -419,8 +427,10 @@ bun run dev -- ingest statement.pdf --account "Everyday Account"
 bun run dev -- ingest transactions.csv                          # CSV auto-detected by extension
 bun run dev -- ingest bank-statement.pdf --dry-run --verbose
 bun run dev -- accounts
+bun run dev -- accounts merge <from-id> <into-id> [--dry-run]   # fold duplicate accounts together, then remove `from`
 bun run dev -- export
 bun run dev -- mappings
+bun run dev -- mappings apply [--dry-run] [--force]      # re-run local mappings + exclusion rules over existing rows
 bun run dev -- networth
 bun run dev -- networth --history --format csv
 bun run dev -- super balance
@@ -429,6 +439,8 @@ bun run dev -- super import data.json --account-name "My Super Fund"
 bun run dev -- transactions list [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--category CAT] [--account ID] [--limit N]
 bun run dev -- transactions summary [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--account ID]
 bun run dev -- transactions search <query> [--limit N]
+bun run dev -- transactions set <id...> --category <cat> [--item <s>] [--notes <s>]
+bun run dev -- transactions set --match <substring> --from <date> --to <date> --category <cat>  # filter selector, alternative to id(s)
 ```
 
 ## Gotchas
@@ -462,6 +474,8 @@ bun run dev -- transactions search <query> [--limit N]
 - Removing WAL/SHM files from a SQLite WAL-mode database can lose uncommitted data — never delete these while the DB might have pending writes
 - Cross-account dedup runs on ALL existing transactions in the DB, not just the current ingest batch — this means re-ingesting after adding a new account catches cross-account dupes retroactively
 - `--account-type` CLI option has no default — when omitted, the AI-inferred type is used, falling back to 'transaction' only if AI doesn't infer a type
+- Account resolution (`upsertAccount`) matches by **name** (case-insensitive, active accounts only) first, so re-ingesting the same account under a different provider/institution/type/parser reuses the existing row instead of spawning a duplicate; it only falls back to the legacy `(external_id, provider)` match when no name match exists. On a name match it refreshes external_id/provider/institution/type from the current ingest
+- Duplicate account rows that predate the name-based resolution fix can be folded together with `accounts merge <from-id> <into-id>` — it moves every row referencing the `from` account (transactions, snapshots, holdings, contributions) into `into` inside one DB transaction, aborting with zero partial writes if a move would violate a unique index (`transactions.external_id`, `snapshots (account_id, date)`)
 
 ## M1: Snapshots + Net Worth
 

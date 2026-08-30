@@ -66,12 +66,7 @@
 		"rent": {
 			"type": "object",
 			"description": "Rent calculation configuration",
-			"required": [
-				"solo_start_date",
-				"solo_weekly_amount",
-				"landlord_patterns",
-				"debit_rent_patterns"
-			],
+			"required": ["solo_start_date", "solo_weekly_amount", "landlord_patterns", "debit_rent_patterns"],
 			"properties": {
 				"solo_start_date": {
 					"type": "string",

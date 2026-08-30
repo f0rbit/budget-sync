@@ -25,6 +25,7 @@ export const CATEGORIES = [
 	"Health",
 	"Entertainment",
 	"Shopping",
+	"Travel",
 	"Other",
 ] as const;
 export type Category = (typeof CATEGORIES)[number];
@@ -230,6 +231,7 @@ export const CATEGORY_DESCRIPTIONS: Record<Category, string> = {
 	Entertainment:
 		"Events, concerts, museums, galleries (ACCA, NGV, QPAC, Sea Life), games (Nintendo), badminton, cinema",
 	Shopping: "Clothing, electronics (JB Hi-Fi, Digidirect), homewares, gifts, accessories, Officeworks",
+	Travel: "Flights, accommodation, travel insurance, passports/visas, overseas trip spending",
 	Other: "Anything that doesn't fit the above categories",
 };
 

@@ -633,6 +633,7 @@
 		{ "match": "To 131007", "reason": "Savings transfer" },
 		{ "match": "To 900021", "reason": "Savings transfer" },
 		{ "match": "BETASHARES DIRECT", "reason": "Investment purchase" },
-		{ "match": "RENT MR MAXWELL", "reason": "Roommate rent deposit" }
+		{ "match": "RENT MR MAXWELL", "reason": "Roommate rent deposit" },
+		{ "match": "To 1310068128040", "reason": "Savings → Everyday transfer" }
 	]
 }

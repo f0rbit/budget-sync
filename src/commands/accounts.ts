@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import { loadConfig } from "../config.js";
 import { createDb } from "../db/client.js";
-import { deactivateAccount, listAccounts } from "../services/account-service.js";
+import { deactivateAccount, listAccounts, mergeAccounts } from "../services/account-service.js";
 
 export const accountsCommand = new Command("accounts").description("List and manage connected accounts");
 
@@ -58,4 +58,44 @@ accountsCommand
 		}
 
 		console.log(`Account ${id} deactivated.`);
+	});
+
+accountsCommand
+	.command("merge")
+	.argument("<from-id>", "Account ID to merge from (will be removed)")
+	.argument("<into-id>", "Account ID to merge into (kept)")
+	.option("--dry-run", "Preview the merge without writing")
+	.description("Merge one account's transactions/snapshots/holdings/contributions into another, then remove it")
+	.action(async (fromId: string, intoId: string, opts: { dryRun?: boolean }) => {
+		const configResult = loadConfig();
+		if (!configResult.ok) {
+			console.error(`Config error: ${configResult.error.code}`);
+			process.exit(1);
+		}
+		const db = createDb(configResult.value.db_path);
+
+		const result = await mergeAccounts(db, fromId, intoId, { dryRun: opts.dryRun });
+		if (!result.ok) {
+			if (result.error.code === "MERGE_CONFLICT") {
+				console.error(`Merge aborted — ${result.error.message}`);
+				for (const c of result.error.collisions) {
+					console.error(
+						c.table === "transactions" ? `  transactions: external_id ${c.externalId}` : `  snapshots: date ${c.date}`,
+					);
+				}
+			} else {
+				console.error(`Error: ${result.error.message}`);
+			}
+			process.exit(1);
+		}
+
+		const r = result.value;
+		console.log(r.dryRun ? "Dry run — no changes written." : "Merge complete.");
+		console.log(`  transactions:   ${r.transactionsMoved}`);
+		console.log(`  snapshots:      ${r.snapshotsMoved}`);
+		console.log(`  holdings:       ${r.holdingsMoved}`);
+		console.log(`  contributions:  ${r.contributionsMoved}`);
+		if (!r.dryRun) {
+			console.log(`Account ${r.fromAccountId} merged into ${r.intoAccountId} and removed.`);
+		}
 	});
