@@ -32,7 +32,7 @@ budget-sync/
     errors.ts                         -- Discriminated union error types + constructor helpers
     commands/
       ingest.ts                       -- `budget ingest` command (AI document ingestion, no default account-type)
-      accounts.ts                     -- `budget-sync accounts` command handler
+      accounts.ts                     -- `budget-sync accounts` command handler (list, deactivate, merge)
       mappings.ts                     -- `budget-sync mappings` command handler (list, search, unmapped, apply)
       export.ts                       -- `budget-sync export` command handler
       networth.ts                       -- `budget-sync networth` command handler
@@ -427,6 +427,7 @@ bun run dev -- ingest statement.pdf --account "Everyday Account"
 bun run dev -- ingest transactions.csv                          # CSV auto-detected by extension
 bun run dev -- ingest bank-statement.pdf --dry-run --verbose
 bun run dev -- accounts
+bun run dev -- accounts merge <from-id> <into-id> [--dry-run]   # fold duplicate accounts together, then remove `from`
 bun run dev -- export
 bun run dev -- mappings
 bun run dev -- mappings apply [--dry-run] [--force]      # re-run local mappings + exclusion rules over existing rows
@@ -473,6 +474,8 @@ bun run dev -- transactions set --match <substring> --from <date> --to <date> --
 - Removing WAL/SHM files from a SQLite WAL-mode database can lose uncommitted data — never delete these while the DB might have pending writes
 - Cross-account dedup runs on ALL existing transactions in the DB, not just the current ingest batch — this means re-ingesting after adding a new account catches cross-account dupes retroactively
 - `--account-type` CLI option has no default — when omitted, the AI-inferred type is used, falling back to 'transaction' only if AI doesn't infer a type
+- Account resolution (`upsertAccount`) matches by **name** (case-insensitive, active accounts only) first, so re-ingesting the same account under a different provider/institution/type/parser reuses the existing row instead of spawning a duplicate; it only falls back to the legacy `(external_id, provider)` match when no name match exists. On a name match it refreshes external_id/provider/institution/type from the current ingest
+- Duplicate account rows that predate the name-based resolution fix can be folded together with `accounts merge <from-id> <into-id>` — it moves every row referencing the `from` account (transactions, snapshots, holdings, contributions) into `into` inside one DB transaction, aborting with zero partial writes if a move would violate a unique index (`transactions.external_id`, `snapshots (account_id, date)`)
 
 ## M1: Snapshots + Net Worth
 
