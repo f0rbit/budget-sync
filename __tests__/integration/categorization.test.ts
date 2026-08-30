@@ -101,7 +101,7 @@ describe("categorization pipeline", () => {
 		expect(result.transaction.reason).toBe("Savings transfer");
 	});
 
-	it("credit transactions are excluded", async () => {
+	it("unmapped credit transactions fall back to Income, flagged", async () => {
 		const ctx = makePipelineContext();
 		const raw = tx({
 			id: "tx-6",
@@ -112,9 +112,10 @@ describe("categorization pipeline", () => {
 
 		const result = await categorizePipeline(raw, ctx);
 
-		expect(result.type).toBe("excluded");
-		if (result.type !== "excluded") return;
-		expect(result.transaction.reason).toContain("Credit");
+		expect(result.type).toBe("categorized");
+		if (result.type !== "categorized") return;
+		expect(result.transaction.category).toBe("Income");
+		expect(result.transaction.notes).toBe("unmapped credit — verify");
 	});
 
 	it("rent transaction before solo_start_date uses shared calculation", async () => {
@@ -172,8 +173,8 @@ describe("categorization pipeline", () => {
 
 		const { categorized, excluded } = await categorizeAll(rawTxs, ctx);
 
-		expect(categorized.length).toBe(2);
-		expect(excluded.length).toBe(1);
-		expect(excluded[0]?.externalId).toBe("tx-b");
+		expect(categorized.length).toBe(3);
+		expect(excluded.length).toBe(0);
+		expect(categorized.find((t) => t.externalId === "tx-b")?.category).toBe("Income");
 	});
 });

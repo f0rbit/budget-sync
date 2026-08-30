@@ -33,8 +33,9 @@ export async function categorizePipeline(tx: RawTransaction, context: PipelineCo
 	}
 	const passedTx = filterResult.value;
 
-	// Step 2: Rent — short-circuit if rent payment
-	if (isRentTransaction(passedTx, context.rentConfig)) {
+	// Step 2: Rent — short-circuit if rent payment (debit-only; a credit
+	// matching a landlord pattern is a bond refund, not a rent charge)
+	if (passedTx.direction === "debit" && isRentTransaction(passedTx, context.rentConfig)) {
 		return { type: "categorized", transaction: handleRent(passedTx, context.rentConfig) };
 	}
 

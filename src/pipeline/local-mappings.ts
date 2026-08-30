@@ -4,12 +4,14 @@ import { type Result, err, ok, try_catch } from "@f0rbit/corpus";
 import { type ParseError, applyEdits, modify, parse as parseJsonc } from "jsonc-parser";
 import type { PipelineError } from "../errors.js";
 import { errors } from "../errors.js";
+import { isSpendCategory } from "../providers/types.js";
 import type {
 	CategorizedTransaction,
 	Category,
 	MerchantMapping,
 	MerchantMappings,
 	RawTransaction,
+	TransactionDirection,
 } from "../providers/types.js";
 
 const DEFAULT_MAPPINGS_PATH = "merchant-mappings.jsonc";
@@ -56,8 +58,21 @@ export function matchTransaction(description: string, mappings: MerchantMapping[
 	return null;
 }
 
+/**
+ * Resolves the category a mapping should produce for a given direction.
+ * Debits use the mapping's category as-is. Credits can only land in Income
+ * or Refund: a credit hitting a spend-category mapping becomes Refund
+ * (keeping the mapping's item), since a matched merchant paying money back
+ * is a refund, not spend.
+ */
+export function resolveMappedCategory(direction: TransactionDirection, category: Category): Category {
+	if (direction === "debit") return category;
+	return isSpendCategory(category) ? "Refund" : category;
+}
+
 export function applyMapping(tx: RawTransaction, mapping: MerchantMapping): CategorizedTransaction {
 	const item = mapping.item;
+	const category = resolveMappedCategory(tx.direction, mapping.category);
 	let notes = "";
 
 	if (mapping.extractLocation) {
@@ -79,7 +94,7 @@ export function applyMapping(tx: RawTransaction, mapping: MerchantMapping): Cate
 		item,
 		amount: tx.amount,
 		direction: tx.direction,
-		category: mapping.category,
+		category,
 		notes,
 		excluded: false,
 		accountId: tx.accountId,

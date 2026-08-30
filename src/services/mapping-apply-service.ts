@@ -4,19 +4,21 @@ import type { AppDatabase } from "../db/client.js";
 import { transactions } from "../db/schema.js";
 import { type DbError, errors } from "../errors.js";
 import { matchExclusionRule } from "../pipeline/filter.js";
-import { matchTransaction } from "../pipeline/local-mappings.js";
-import type { ExclusionRule, MerchantMapping } from "../providers/types.js";
+import { matchTransaction, resolveMappedCategory } from "../pipeline/local-mappings.js";
+import { UNMAPPED_CREDIT_NOTE } from "../providers/types.js";
+import type { Category, ExclusionRule, MerchantMapping } from "../providers/types.js";
+import { isUnmappedRow } from "./transaction-service.js";
 
 export type TransactionRow = typeof transactions.$inferSelect;
 
 export interface ApplyMappingsOptions {
-	/** Recategorize even if current category isn't "Other" */
+	/** Recategorize even if the row doesn't need mapping (isUnmappedRow) */
 	force?: boolean;
 }
 
 export type MappingApplyChange =
 	| { type: "excluded"; row: TransactionRow; reason: string }
-	| { type: "recategorized"; row: TransactionRow; item: string; category: string };
+	| { type: "recategorized"; row: TransactionRow; item: string; category: Category; clearNote: boolean };
 
 export interface MappingApplyPlan {
 	scanned: number;
@@ -45,13 +47,16 @@ export function planMappingsApply(
 		}
 
 		if (row.excluded) continue;
-		if (row.category !== "Other" && !options?.force) continue;
+		if (!isUnmappedRow(row) && !options?.force) continue;
 
 		const mapping = matchTransaction(row.rawDescription, mappings);
 		if (!mapping) continue;
-		if (mapping.item === row.item && mapping.category === row.category) continue;
 
-		changes.push({ type: "recategorized", row, item: mapping.item, category: mapping.category });
+		const category = resolveMappedCategory(row.direction, mapping.category);
+		const clearNote = row.notes === UNMAPPED_CREDIT_NOTE;
+		if (mapping.item === row.item && category === row.category && !clearNote) continue;
+
+		changes.push({ type: "recategorized", row, item: mapping.item, category, clearNote });
 	}
 
 	return { scanned: rows.length, changes };
@@ -72,7 +77,11 @@ export async function applyMappingsPlan(
 						.run();
 				} else {
 					db.update(transactions)
-						.set({ item: change.item, category: change.category as TransactionRow["category"] })
+						.set({
+							item: change.item,
+							category: change.category,
+							...(change.clearNote ? { notes: "" } : {}),
+						})
 						.where(eq(transactions.id, change.row.id))
 						.run();
 				}

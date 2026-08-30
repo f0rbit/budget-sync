@@ -15,16 +15,6 @@ export function matchExclusionRule(description: string, exclusions: ExclusionRul
 }
 
 export function filterTransaction(tx: RawTransaction, exclusions: ExclusionRule[]): FilterResult {
-	if (tx.direction === "credit") {
-		return err({
-			externalId: tx.id,
-			rawDescription: tx.description,
-			amount: tx.amount,
-			direction: tx.direction,
-			reason: "Credit transaction (incoming money)",
-		});
-	}
-
 	const rule = matchExclusionRule(tx.description, exclusions);
 	if (rule) {
 		return err({

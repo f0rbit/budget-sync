@@ -96,7 +96,7 @@ describe("categorizePipeline", () => {
 		}
 	});
 
-	it("excludes credit transactions before checking other rules", async () => {
+	it("routes a credit that hits a spend-category mapping to Refund, keeping the item", async () => {
 		const tx = makeTransaction({
 			description: "WOOLWORTHS/REFUND",
 			direction: "credit",
@@ -107,9 +107,26 @@ describe("categorizePipeline", () => {
 
 		const result = await categorizePipeline(tx, ctx);
 
-		expect(result.type).toBe("excluded");
-		if (result.type === "excluded") {
-			expect(result.transaction.reason).toBe("Credit transaction (incoming money)");
+		expect(result.type).toBe("categorized");
+		if (result.type === "categorized") {
+			expect(result.transaction.category).toBe("Refund");
+			expect(result.transaction.item).toBe("Woolworths");
+		}
+	});
+
+	it("does not book a credit matching a landlord pattern as Rent", async () => {
+		const tx = makeTransaction({
+			description: "IPY*GRACZYKTHOMPSON Bond Refund",
+			direction: "credit",
+			transactionDate: "2026-03-15",
+		});
+		const ctx = makeContext();
+
+		const result = await categorizePipeline(tx, ctx);
+
+		expect(result.type).toBe("categorized");
+		if (result.type === "categorized") {
+			expect(result.transaction.category).not.toBe("Rent");
 		}
 	});
 
@@ -146,14 +163,13 @@ describe("categorizeAll", () => {
 		const ctx = makeContext();
 		const { categorized, excluded } = await categorizeAll([debit, credit, rent], ctx);
 
-		expect(categorized).toHaveLength(2);
-		expect(excluded).toHaveLength(1);
+		expect(categorized).toHaveLength(3);
+		expect(excluded).toHaveLength(0);
 
 		const categories = categorized.map((t) => t.category);
 		expect(categories).toContain("Other");
 		expect(categories).toContain("Rent");
-
-		expect(excluded[0]?.externalId).toBe(credit.id);
+		expect(categories).toContain("Income");
 	});
 
 	it("returns empty arrays for empty input", async () => {
