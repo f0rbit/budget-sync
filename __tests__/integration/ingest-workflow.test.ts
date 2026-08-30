@@ -537,4 +537,30 @@ describe("ingest-workflow", () => {
 		const snapRows = ctx.db.select().from(snapshots).all();
 		expect(snapRows.length).toBe(0);
 	});
+
+	it("I17: ingesting the same account name via different providers/institutions reuses one account", async () => {
+		const secondParser: InMemoryDocumentParser = createTestDocumentParser({
+			defaultResult: makeParsedDocument(),
+		});
+		// Simulate a distinct provider (e.g. AI doc parser vs CSV parser vs manual entry)
+		(secondParser as { name: string }).name = "second-parser";
+
+		const first = await ingestDocument(ctx, parser, filePath, config, {
+			accountName: "Amplify Platinum",
+			institution: "BankSA",
+			accountType: "credit",
+		});
+		expect(first.ok).toBe(true);
+
+		const second = await ingestDocument(ctx, secondParser, filePath, config, {
+			accountName: "Amplify Platinum",
+			institution: "Amplify",
+			accountType: "credit",
+		});
+		expect(second.ok).toBe(true);
+
+		const dbAccounts = ctx.db.select().from(accounts).all();
+		const matches = dbAccounts.filter((a) => a.name.toLowerCase() === "amplify platinum");
+		expect(matches.length).toBe(1);
+	});
 });

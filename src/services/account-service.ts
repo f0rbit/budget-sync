@@ -1,5 +1,5 @@
 import { type Result, ok, try_catch_async } from "@f0rbit/corpus";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { AppDatabase } from "../db/client.js";
 import { accounts } from "../db/schema.js";
 import { type DbError, errors } from "../errors.js";
@@ -8,8 +8,31 @@ import type { AccountInfo } from "../providers/types.js";
 export type AccountRow = typeof accounts.$inferSelect;
 
 /**
+ * Find an active account by name, case-insensitive.
+ * Name is the durable identity of an account across ingest runs — a person's
+ * "Amplify Platinum" card doesn't change just because it was parsed by a
+ * different provider/institution/type on a later run.
+ */
+export async function findAccountByName(db: AppDatabase, name: string): Promise<Result<AccountRow | null, DbError>> {
+	return try_catch_async(
+		async () => {
+			const row = db
+				.select()
+				.from(accounts)
+				.where(and(sql`lower(${accounts.name}) = lower(${name})`, eq(accounts.isActive, true)))
+				.get();
+			return row ?? null;
+		},
+		(e) => errors.dbError(`Failed to find account by name: ${e}`, e),
+	);
+}
+
+/**
  * Upsert an account from provider data.
- * Matches on (external_id, provider). Creates if not found, updates if found.
+ * Matches on name (case-insensitive, active accounts only) so re-ingesting
+ * the same account under a different provider/institution/type reuses the
+ * existing row instead of spawning a duplicate. Falls back to matching on
+ * (external_id, provider) for accounts not yet resolvable by name.
  */
 export async function upsertAccount(
 	db: AppDatabase,
@@ -18,16 +41,24 @@ export async function upsertAccount(
 ): Promise<Result<AccountRow, DbError>> {
 	return try_catch_async(
 		async () => {
-			const existing = db
-				.select()
-				.from(accounts)
-				.where(and(eq(accounts.externalId, info.id), eq(accounts.provider, providerName)))
-				.get();
+			const existing =
+				db
+					.select()
+					.from(accounts)
+					.where(and(sql`lower(${accounts.name}) = lower(${info.name})`, eq(accounts.isActive, true)))
+					.get() ??
+				db
+					.select()
+					.from(accounts)
+					.where(and(eq(accounts.externalId, info.id), eq(accounts.provider, providerName)))
+					.get();
 
 			if (existing) {
 				const updated = db
 					.update(accounts)
 					.set({
+						externalId: info.id,
+						provider: providerName,
 						name: info.name,
 						institution: info.institution,
 						type: info.type,
