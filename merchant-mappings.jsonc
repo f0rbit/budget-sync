@@ -625,7 +625,9 @@
 			"match": "WESTEND VIETNAMESE FOO",
 			"item": "West End Vietnamese Food",
 			"category": "Eating Out"
-		}
+		},
+		{ "match": "LAHA PTY LTD", "item": "DJ City (speakers)", "category": "Shopping" },
+		{ "match": "1313_QUEEN STREET", "item": "Zara", "category": "Shopping" }
 	],
 
 	"exclusions": [
@@ -633,6 +635,8 @@
 		{ "match": "To 131007", "reason": "Savings transfer" },
 		{ "match": "To 900021", "reason": "Savings transfer" },
 		{ "match": "BETASHARES DIRECT", "reason": "Investment purchase" },
+		{ "match": "To 248-029 009206534", "reason": "Betashares investment transfer" },
+		{ "match": "Withdrawal           04Apr23:48 Speakers", "reason": "Transfer to fund DJ City speakers (counted under Laha Pty Ltd)" },
 		{ "match": "RENT MR MAXWELL", "reason": "Roommate rent deposit" },
 		{ "match": "To 1310068128040", "reason": "Savings → Everyday transfer" }
 	]
