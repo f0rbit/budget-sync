@@ -135,4 +135,41 @@ describe("mapping-apply-service", () => {
 		if (!after.ok) return;
 		expect(after.value[0]?.category).toBe("Other");
 	});
+
+	it("recategorizes an unmapped credit (Income + flag note) once a mapping exists, clearing the note", async () => {
+		await createTransaction(
+			db,
+			accountId,
+			makeCatTx({
+				externalId: "tx-1",
+				rawDescription: "SALARY ACME CORP",
+				direction: "credit",
+				category: "Income",
+				notes: "unmapped credit — verify",
+			}),
+		);
+
+		const salaryMappings: MerchantMapping[] = [{ match: "SALARY ACME", item: "Salary", category: "Income" }];
+
+		const rowsResult = await getTransactions(db);
+		expect(rowsResult.ok).toBe(true);
+		if (!rowsResult.ok) return;
+
+		const plan = planMappingsApply(rowsResult.value, salaryMappings, exclusions);
+		expect(plan.changes).toHaveLength(1);
+		const [change] = plan.changes;
+		expect(change?.type).toBe("recategorized");
+
+		const applyResult = await applyMappingsPlan(db, plan);
+		expect(applyResult.ok).toBe(true);
+
+		const after = await getTransactions(db);
+		expect(after.ok).toBe(true);
+		if (!after.ok) return;
+
+		const salary = after.value.find((r) => r.externalId === "tx-1");
+		expect(salary?.category).toBe("Income");
+		expect(salary?.item).toBe("Salary");
+		expect(salary?.notes).toBe("");
+	});
 });

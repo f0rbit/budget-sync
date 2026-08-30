@@ -1,8 +1,9 @@
-import { type Result, try_catch_async } from "@f0rbit/corpus";
-import { and, desc, eq, gte, inArray, like, lte, or, sql } from "drizzle-orm";
+import { type Result, ok, try_catch_async } from "@f0rbit/corpus";
+import { and, desc, eq, gte, inArray, like, lte, or } from "drizzle-orm";
 import type { AppDatabase } from "../db/client.js";
 import { accounts, transactions } from "../db/schema.js";
 import { type DbError, errors } from "../errors.js";
+import { UNMAPPED_CREDIT_NOTE } from "../providers/types.js";
 import type { AccountType, CategorizedTransaction, Category } from "../providers/types.js";
 
 // === Types ===
@@ -16,6 +17,15 @@ export interface TransactionFilters {
 }
 
 export type TransactionRow = typeof transactions.$inferSelect;
+
+/**
+ * A row "needs mapping" if it landed in the debit fallback ("Other") or the
+ * credit fallback (flagged with UNMAPPED_CREDIT_NOTE). Single predicate used
+ * by both `mappings unmapped` and `mappings apply`.
+ */
+export function isUnmappedRow(row: Pick<TransactionRow, "category" | "notes">): boolean {
+	return row.category === "Other" || row.notes === UNMAPPED_CREDIT_NOTE;
+}
 
 // === Functions ===
 
@@ -107,7 +117,9 @@ export async function getTransactions(
 }
 
 export async function getUncategorized(db: AppDatabase): Promise<Result<TransactionRow[], DbError>> {
-	return getTransactions(db, { category: "Other" });
+	const result = await getTransactions(db);
+	if (!result.ok) return result;
+	return ok(result.value.filter((row) => !row.excluded && isUnmappedRow(row)));
 }
 
 export async function searchTransactions(
@@ -130,42 +142,35 @@ export async function searchTransactions(
 	);
 }
 
-export async function getCategorySummary(
+export interface ReportRowFilters {
+	dateFrom?: string;
+	dateTo?: string;
+	accountId?: string;
+}
+
+/**
+ * Non-excluded rows for the pure report layer (src/reporting/), ascending by
+ * date. The one DB query every report function is fed from.
+ */
+export async function getReportRows(
 	db: AppDatabase,
-	filters?: { dateFrom?: string; dateTo?: string; accountId?: string },
-): Promise<Result<Array<{ category: string; total: number; count: number }>, DbError>> {
+	filters?: ReportRowFilters,
+): Promise<Result<TransactionRow[], DbError>> {
 	return try_catch_async(
 		async () => {
-			const conditions = [];
+			const conditions = [eq(transactions.excluded, false)];
 			if (filters?.dateFrom) conditions.push(gte(transactions.date, filters.dateFrom));
 			if (filters?.dateTo) conditions.push(lte(transactions.date, filters.dateTo));
 			if (filters?.accountId) conditions.push(eq(transactions.accountId, filters.accountId));
 
-			const baseQuery =
-				conditions.length > 0
-					? db
-							.select({
-								category: transactions.category,
-								total: sql<number>`sum(${transactions.amount})`,
-								count: sql<number>`count(*)`,
-							})
-							.from(transactions)
-							.where(and(...conditions))
-							.groupBy(transactions.category)
-							.orderBy(desc(sql`sum(${transactions.amount})`))
-					: db
-							.select({
-								category: transactions.category,
-								total: sql<number>`sum(${transactions.amount})`,
-								count: sql<number>`count(*)`,
-							})
-							.from(transactions)
-							.groupBy(transactions.category)
-							.orderBy(desc(sql`sum(${transactions.amount})`));
-
-			return baseQuery.all();
+			return db
+				.select()
+				.from(transactions)
+				.where(and(...conditions))
+				.orderBy(transactions.date)
+				.all();
 		},
-		(e) => errors.dbError(`Failed to get category summary: ${e}`, e),
+		(e) => errors.dbError(`Failed to get report rows: ${e}`, e),
 	);
 }
 

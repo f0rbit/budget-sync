@@ -67,18 +67,23 @@ budget-sync/
       dedup.ts                        -- detectCrossAccountDuplicates(): cross-account duplicate detection
       filter.ts                       -- filterTransaction(tx, exclusions) -> Result<RawTransaction, ExcludedTransaction>
       rent.ts                         -- isRentTransaction(), calculateRentAmount(), handleRent()
-      local-mappings.ts               -- loadMappings(path?), matchTransaction(), applyMapping(), appendMappings()
-      fallback.ts                     -- createFallback()
+      local-mappings.ts               -- loadMappings(path?), matchTransaction(), applyMapping(), resolveMappedCategory(direction, category), appendMappings()
+      enrich-mapper.ts                -- createFallback(): "Other" for debits, "Income" + UNMAPPED_CREDIT_NOTE for credits
     services/
       ingest-service.ts               -- 17-step document ingestion orchestrator
       account-service.ts              -- upsertAccount(), listAccounts(), deactivateAccount(), findAccountByExternalId()
-      transaction-service.ts          -- createTransaction(), getTransactions(filters), getUncategorized(), searchTransactions(), getCategorySummary(), selectTransactions(), updateTransactions()
+      transaction-service.ts          -- createTransaction(), getTransactions(filters), getUncategorized(), isUnmappedRow(), getReportRows(filters), searchTransactions(), selectTransactions(), updateTransactions()
       mapping-apply-service.ts          -- planMappingsApply()/applyMappingsPlan(): re-run mappings+exclusions over existing SQLite rows
       export-service.ts               -- exportToObsidian(db, vaultPath, budgetDir, options)
       snapshot-service.ts               -- upsertSnapshot(), getLatestSnapshots(), getSnapshotHistory()
       networth-service.ts               -- getCurrentNetWorth(), getNetWorthHistory() with carry-forward
       contribution-service.ts           -- insertContributions(), getContributions(), getContributionSummary()
       super-sync-service.ts             -- syncSuper() import orchestrator
+    reporting/
+      types.ts                        -- ReportTransaction (Pick<TransactionRow, ...>) — the shape every report function consumes
+      summary.ts                      -- summarizeTransactions(rows): spend breakdown, income/refunds/net/savingsRate
+      monthly.ts                      -- pivotMonthly(rows): month x category pivot
+      recurring.ts                    -- detectRecurring(rows, { minMonths, asOf }): recurring-charge detection
   __tests__/
     integration/                      -- Integration tests (in-memory DB + corpus)
       ingest-workflow.test.ts           -- Ingest pipeline integration tests (dedup + balance)
@@ -257,11 +262,13 @@ PipelineContext = { mappings: MerchantMappings, rentConfig: RentConfig, aiCatego
 
 Steps (sequential if-return, NOT pipe().flat_map()):
 
-1. **Filter** (`filterTransaction`): Exclude credits and pattern-matched exclusions. Returns `Result<RawTransaction, ExcludedTransaction>`.
-2. **Rent** (`isRentTransaction` + `handleRent`): Short-circuit if landlord or debit rent pattern matches. `calculateRentAmount()` handles solo vs. shared logic based on `solo_start_date`.
-3. **Local mapping** (`matchTransaction` + `applyMapping`): Case-insensitive substring match against `merchant-mappings.jsonc` rules. `extractLocation` option extracts location suffix from description.
+1. **Filter** (`filterTransaction`): Pattern-matched exclusions only, applied to both directions (credits are NOT blanket-excluded). Returns `Result<RawTransaction, ExcludedTransaction>`.
+2. **Rent** (`isRentTransaction` + `handleRent`): Debit-only short-circuit if landlord or debit rent pattern matches (a credit matching a landlord pattern is a bond refund, not rent). `calculateRentAmount()` handles solo vs. shared logic based on `solo_start_date`.
+3. **Local mapping** (`matchTransaction` + `applyMapping`): Case-insensitive substring match against `merchant-mappings.jsonc` rules. `extractLocation` option extracts location suffix from description. `resolveMappedCategory(direction, category)` routes a credit hitting a spend-category mapping to `Refund` (item preserved); debits use the mapping's category as-is.
 4. **AI batch categorization**: Batch all uncategorized transactions → Claude API → categorize + suggest mappings. Auto-appends suggested mappings to `merchant-mappings.jsonc` via `appendMappings()`. Non-fatal: if API fails, transactions proceed to fallback.
-5. **Fallback** (`createFallback`): Category "Other", item = raw description. Only reached if AI absent or fails.
+5. **Fallback** (`createFallback`): Debits → category "Other", item = raw description. Credits → category "Income", notes = `UNMAPPED_CREDIT_NOTE` ("unmapped credit — verify"), item = raw description. Only reached if AI absent or fails (AI never sees credits — they never reach step 4 as "Other").
+
+Credits can only land in `Income`, `Refund`, or excluded — never any spend category. `isUnmappedRow(row)` (in `transaction-service.ts`) = `category === "Other" || notes === UNMAPPED_CREDIT_NOTE`; it's the one predicate `mappings unmapped`/`mappings apply` use for "needs mapping", so a later mapping re-categorizes a flagged credit and clears the note.
 
 Batch function: `categorizeAll(transactions, context)` returns `{ categorized: CategorizedTransaction[], excluded: ExcludedTransaction[], aiCategorizationResult?: AiCategorizationResult }`.
 
@@ -283,7 +290,7 @@ Wired into `ingestDocument()` at Step 10.7 — runs after categorization, before
 
 1. Create `sync_runs` row (cuid2 ID)
 2. Read document from filesystem (PDF, CSV, image, text)
-3. Compute content hash for dedup (skip if already ingested)
+3. Compute content hash (stored on the corpus doc for audit; nothing skips on it — see Gotchas)
 4. Snapshot document to `raw-documents` corpus store (base64 for binary, raw text for CSV)
 5. Route to parser: CSV files auto-detected by extension → `CsvDocumentParser`, otherwise AI parser
 6. Parser: send document to Claude API for extraction (or CSV parser: structured parse)
@@ -334,7 +341,17 @@ All files go through the unified `ingestDocument()` pipeline. CSV files are auto
 Service functions in `src/services/transaction-service.ts`:
 
 - `searchTransactions(db, query, limit?)` — LIKE search on `item` and `rawDescription` fields
-- `getCategorySummary(db, filters?)` — category aggregation with totals and counts
+- `getReportRows(db, filters?)` — non-excluded rows, ascending by date; the one DB query feeding `src/reporting/`. Replaces the old `getCategorySummary()` (deleted — it double-built the query and counted excluded rows).
+
+### Reporting
+
+Pure functions in `src/reporting/` over `ReportTransaction[]` (`Pick<TransactionRow, "date"|"amount"|"direction"|"category"|"item">`) — no DB access, all unit-tested with hand-built rows:
+
+- `summarizeTransactions(rows)` (`summary.ts`) — spend breakdown by spend category, `spend`/`income`/`refunds`/`net`/`savingsRate` (null when income is 0, never NaN/Infinity)
+- `pivotMonthly(rows)` (`monthly.ts`) — month × category pivot, reuses `summarizeTransactions()` per month group
+- `detectRecurring(rows, { minMonths, asOf })` (`recurring.ts`) — cadence from median gap between charges of the same normalised item, `possiblyLapsed` from days since last charge vs. 1.5× the cadence period
+
+Add new reports here as pure functions over `getReportRows()` output, not as SQL group-bys — the recurring-charge cadence/median math needs to be directly testable.
 
 ## Value Types
 
@@ -343,10 +360,12 @@ Canonical enum arrays defined in `src/providers/types.ts`:
 ```ts
 ACCOUNT_TYPES = ["transaction", "savings", "credit", "super", "investment"]
 TRANSACTION_DIRECTIONS = ["debit", "credit"]
-CATEGORIES = ["Rent", "Woolworths", "Eating Out", "Alcohol", "Subscriptions", "Transport", "Bills", "Health", "Entertainment", "Shopping", "Travel", "Other"]
+CATEGORIES = ["Rent", "Woolworths", "Eating Out", "Alcohol", "Subscriptions", "Transport", "Bills", "Health", "Entertainment", "Shopping", "Travel", "Income", "Refund", "Other"]
 SYNC_STATUSES = ["success", "partial", "failed"]
 CONTRIBUTION_TYPES = ["employer", "salary_sacrifice", "voluntary", "fhss", "government"]
 ```
+
+Adding a category: edit `CATEGORIES` in `providers/types.ts`, the inlined copy in `db/schema.ts`, and `merchant-mappings.schema.json`. No SQL migration needed — SQLite `text({ enum })` carries no CHECK constraint (`bunx drizzle-kit generate` reports no changes). Typecheck fails until `CATEGORY_DESCRIPTIONS: Record<Category, string>` is extended, which is what forces every touch point.
 
 ## Categories
 
@@ -363,7 +382,9 @@ CONTRIBUTION_TYPES = ["employer", "salary_sacrifice", "voluntary", "fhss", "gove
 | Entertainment | Movies, music, arts |
 | Shopping | Clothing, electronics, home goods |
 | Travel | Flights, accommodation, travel insurance, passports/visas, overseas trip spending |
-| Other | Fallback for uncategorized transactions |
+| Income | Incoming money only: salary, interest, dividends/distributions |
+| Refund | Incoming money only: friends paying you back, merchant refunds, PayPal credits |
+| Other | Fallback for uncategorized transactions (debits only — unmapped credits fall back to Income, flagged) |
 
 ## Common Tasks
 
@@ -437,7 +458,9 @@ bun run dev -- super balance
 bun run dev -- super contributions
 bun run dev -- super import data.json --account-name "My Super Fund"
 bun run dev -- transactions list [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--category CAT] [--account ID] [--limit N]
-bun run dev -- transactions summary [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--account ID]
+bun run dev -- transactions summary [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--account ID]  # spend breakdown + Spend/Refunds/Income/Net/Savings rate footer
+bun run dev -- transactions monthly [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--account ID] [--format table|csv|json]  # month x category pivot
+bun run dev -- transactions recurring [--min-months N] [--as-of YYYY-MM-DD] [--format table|csv|json]  # recurring-charge detection (cadence, typical amount, possibly lapsed)
 bun run dev -- transactions search <query> [--limit N]
 bun run dev -- transactions set <id...> --category <cat> [--item <s>] [--notes <s>]
 bun run dev -- transactions set --match <substring> --from <date> --to <date> --category <cat>  # filter selector, alternative to id(s)
@@ -459,10 +482,10 @@ bun run dev -- transactions set --match <substring> --from <date> --to <date> --
 - Biome enforces `noNonNullAssertion` -- use type predicate filters instead of `!`
 - CSV provider generates deterministic external IDs via sha256 hash of `date|description|amount|direction`, truncated to 16 hex chars
 - `InMemoryBankProvider` requires `authenticate()` before any other method -- returns `AUTH_FAILED` otherwise (matches real provider behavior)
-- `filterTransaction()` returns `Result<RawTransaction, ExcludedTransaction>` -- the err case is NOT an error, it is a categorized exclusion (credits, matched exclusion rules)
+- `filterTransaction()` returns `Result<RawTransaction, ExcludedTransaction>` -- the err case is NOT an error, it is a categorized exclusion (matched exclusion rules, both directions). Credits are NOT blanket-excluded here -- see "Credits are ingested" below
 - `AppDatabase` is a type alias for `ReturnType<typeof createDb>`, not a class -- do not `new` it
 - AI-generated external IDs use `ai-${sha256(date|description|amount|direction)}` prefix
-- Document dedup uses content hash -- re-ingesting same file detected before AI call
+- Document dedup does NOT use content hash -- the hash is computed and stored on the corpus doc for audit only, nothing skips on it. The backfill path is re-ingesting the file: `createTransaction()` dedups by external_id and reports skipped counts, so re-running `ingest` on an already-ingested CSV is idempotent for existing rows and only materializes genuinely new ones
 - AI parsing is non-deterministic -- same document may produce slightly different results across runs
 - ANTHROPIC_API_KEY env var required for AI parsing and AI categorization, not needed for CSV-only ingestion
 - Full document binary stored in corpus (base64 for PDFs/images, raw text for CSVs)
@@ -476,6 +499,11 @@ bun run dev -- transactions set --match <substring> --from <date> --to <date> --
 - `--account-type` CLI option has no default — when omitted, the AI-inferred type is used, falling back to 'transaction' only if AI doesn't infer a type
 - Account resolution (`upsertAccount`) matches by **name** (case-insensitive, active accounts only) first, so re-ingesting the same account under a different provider/institution/type/parser reuses the existing row instead of spawning a duplicate; it only falls back to the legacy `(external_id, provider)` match when no name match exists. On a name match it refreshes external_id/provider/institution/type from the current ingest
 - Duplicate account rows that predate the name-based resolution fix can be folded together with `accounts merge <from-id> <into-id>` — it moves every row referencing the `from` account (transactions, snapshots, holdings, contributions) into `into` inside one DB transaction, aborting with zero partial writes if a move would violate a unique index (`transactions.external_id`, `snapshots (account_id, date)`)
+- Credits are ingested. Only `Income`, `Refund`, or excluded are valid outcomes for a credit; `resolveMappedCategory()` (`pipeline/local-mappings.ts`) enforces this when a credit hits a spend mapping (routes it to `Refund`, keeping the mapping's item). Unmapped credits fall back to `Income` with notes = `UNMAPPED_CREDIT_NOTE`; `isUnmappedRow()` (`transaction-service.ts`) is the single predicate for "needs mapping" (used by `mappings unmapped` and `mappings apply`)
+- Exclusion regexes are direction-agnostic — incoming own-account transfers need their own `From <acct>` rules, mirroring the `To <acct>` ones. Different bank statement exports pad the whitespace between the label and the account number inconsistently (`To 1310068128040` vs `From    1310068128040`, 4 spaces) — write these as `From\\s+<acct>`, not a literal single space, or the rule silently won't match some files
+- Rent handling and cross-account dedup are debit-only — a credit matching a landlord pattern is a bond refund, not a rent charge
+- `env -u ANTHROPIC_API_KEY` does NOT disable the AI categorizer under `bun run dev` — Bun auto-loads `.env` at process start and repopulates it regardless of what was unset in the parent shell. Use `ANTHROPIC_API_KEY="" bun run dev -- ingest ...` instead (an explicit empty value is not overridden by `.env`)
+- `bun run gate` = typecheck → test → lint; there is no CI, the verifier runs gate locally and merges
 
 ## M1: Snapshots + Net Worth
 

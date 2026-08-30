@@ -563,4 +563,38 @@ describe("ingest-workflow", () => {
 		const matches = dbAccounts.filter((a) => a.name.toLowerCase() === "amplify platinum");
 		expect(matches.length).toBe(1);
 	});
+
+	it("I18: credit rows are ingested as Income, and a re-ingest of the same file skips them as duplicates", async () => {
+		const creditParser = createTestDocumentParser({
+			defaultResult: makeParsedDocument({
+				transactions: [
+					makeTransaction({
+						id: "credit-1",
+						description: "SALARY PAYMENT ACME CORP",
+						amount: 3000,
+						direction: "credit",
+						transactionDate: "2026-03-01",
+						postDate: "2026-03-01",
+						accountId: "pending",
+					}),
+				],
+			}),
+		});
+
+		const first = await ingestDocument(ctx, creditParser, filePath, config);
+		expect(first.ok).toBe(true);
+		if (!first.ok) return;
+		expect(first.value.transactionsCreated).toBe(1);
+
+		const dbTxs = ctx.db.select().from(transactions).all();
+		expect(dbTxs.length).toBe(1);
+		expect(dbTxs[0]?.direction).toBe("credit");
+		expect(dbTxs[0]?.category).toBe("Income");
+
+		const second = await ingestDocument(ctx, creditParser, filePath, config);
+		expect(second.ok).toBe(true);
+		if (!second.ok) return;
+		expect(second.value.transactionsCreated).toBe(0);
+		expect(second.value.transactionsSkipped).toBe(1);
+	});
 });

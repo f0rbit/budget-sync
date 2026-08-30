@@ -11,7 +11,8 @@
 		"lint:fix": "biome check --fix .",
 		"db:generate": "bunx drizzle-kit generate",
 		"db:migrate": "bunx drizzle-kit migrate",
-		"db:studio": "bunx drizzle-kit studio"
+		"db:studio": "bunx drizzle-kit studio",
+		"gate": "bun run typecheck && bun run test && bun run lint"
 	},
 	"dependencies": {
 		"@anthropic-ai/sdk": "^0.78.0",

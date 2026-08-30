@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import type { AppDatabase } from "../../src/db/client.js";
 import type { CategorizedTransaction } from "../../src/providers/types.js";
+import { summarizeTransactions } from "../../src/reporting/summary.js";
 import { upsertAccount } from "../../src/services/account-service.js";
 import {
 	createTransaction,
-	getCategorySummary,
+	getReportRows,
 	getTransactions,
 	searchTransactions,
 } from "../../src/services/transaction-service.js";
@@ -218,42 +219,34 @@ describe("transactions CLI service", () => {
 		});
 	});
 
-	describe("getCategorySummary", () => {
-		it("aggregates totals and counts by category", async () => {
+	describe("getReportRows", () => {
+		it("excludes rows marked excluded", async () => {
 			await createTransaction(db, accountId, makeCatTx({ externalId: "tx-1", category: "Eating Out", amount: 10 }));
-			await createTransaction(db, accountId, makeCatTx({ externalId: "tx-2", category: "Eating Out", amount: 20 }));
-			await createTransaction(db, accountId, makeCatTx({ externalId: "tx-3", category: "Shopping", amount: 30 }));
-			await createTransaction(db, accountId, makeCatTx({ externalId: "tx-4", category: "Other", amount: 5 }));
+			await createTransaction(
+				db,
+				accountId,
+				makeCatTx({ externalId: "tx-2", category: "Bills", amount: 20, excluded: true, excludeReason: "test" }),
+			);
 
-			const result = await getCategorySummary(db);
+			const result = await getReportRows(db);
 			expect(result.ok).toBe(true);
 			if (!result.ok) return;
 
-			const byCategory = Object.fromEntries(result.value.map((r) => [r.category, r]));
-			expect(byCategory["Eating Out"]?.total).toBe(30);
-			expect(byCategory["Eating Out"]?.count).toBe(2);
-			expect(byCategory.Shopping?.total).toBe(30);
-			expect(byCategory.Shopping?.count).toBe(1);
-			expect(byCategory.Other?.total).toBe(5);
-			expect(byCategory.Other?.count).toBe(1);
+			expect(result.value.length).toBe(1);
+			expect(result.value[0]?.externalId).toBe("tx-1");
 		});
 
-		it("orders by total descending", async () => {
-			await createTransaction(db, accountId, makeCatTx({ externalId: "tx-1", category: "Other", amount: 5 }));
-			await createTransaction(db, accountId, makeCatTx({ externalId: "tx-2", category: "Shopping", amount: 50 }));
-			await createTransaction(db, accountId, makeCatTx({ externalId: "tx-3", category: "Eating Out", amount: 20 }));
+		it("filters by date range and accountId", async () => {
+			const acct2Result = await upsertAccount(db, "test", {
+				id: "acc-2",
+				name: "Savings Account",
+				institution: "TestBank",
+				type: "savings",
+			});
+			expect(acct2Result.ok).toBe(true);
+			if (!acct2Result.ok) return;
+			const account2Id = acct2Result.value.id;
 
-			const result = await getCategorySummary(db);
-			expect(result.ok).toBe(true);
-			if (!result.ok) return;
-
-			expect(result.value.length).toBe(3);
-			expect(result.value[0]?.category).toBe("Shopping");
-			expect(result.value[1]?.category).toBe("Eating Out");
-			expect(result.value[2]?.category).toBe("Other");
-		});
-
-		it("filters by date range", async () => {
 			await createTransaction(
 				db,
 				accountId,
@@ -266,60 +259,67 @@ describe("transactions CLI service", () => {
 			);
 			await createTransaction(
 				db,
-				accountId,
-				makeCatTx({ externalId: "tx-3", date: "2026-03-10", category: "Shopping", amount: 30 }),
-			);
-			await createTransaction(
-				db,
-				accountId,
-				makeCatTx({ externalId: "tx-4", date: "2026-04-01", category: "Shopping", amount: 200 }),
-			);
-
-			const result = await getCategorySummary(db, { dateFrom: "2026-03-01", dateTo: "2026-03-15" });
-			expect(result.ok).toBe(true);
-			if (!result.ok) return;
-
-			const byCategory = Object.fromEntries(result.value.map((r) => [r.category, r]));
-			expect(byCategory["Eating Out"]?.total).toBe(20);
-			expect(byCategory["Eating Out"]?.count).toBe(1);
-			expect(byCategory.Shopping?.total).toBe(30);
-			expect(byCategory.Shopping?.count).toBe(1);
-			expect(byCategory.Rent).toBeUndefined();
-		});
-
-		it("filters by accountId", async () => {
-			const acct2Result = await upsertAccount(db, "test", {
-				id: "acc-2",
-				name: "Savings Account",
-				institution: "TestBank",
-				type: "savings",
-			});
-			expect(acct2Result.ok).toBe(true);
-			if (!acct2Result.ok) return;
-			const account2Id = acct2Result.value.id;
-
-			await createTransaction(db, accountId, makeCatTx({ externalId: "tx-1", category: "Eating Out", amount: 10 }));
-			await createTransaction(
-				db,
 				account2Id,
-				makeCatTx({ externalId: "tx-2", category: "Eating Out", amount: 50, accountId: "acc-2" }),
+				makeCatTx({
+					externalId: "tx-3",
+					date: "2026-03-10",
+					category: "Shopping",
+					amount: 30,
+					accountId: "acc-2",
+				}),
 			);
 
-			const result = await getCategorySummary(db, { accountId });
+			const result = await getReportRows(db, { dateFrom: "2026-03-01", dateTo: "2026-03-31", accountId });
 			expect(result.ok).toBe(true);
 			if (!result.ok) return;
 
 			expect(result.value.length).toBe(1);
-			expect(result.value[0]?.category).toBe("Eating Out");
-			expect(result.value[0]?.total).toBe(10);
-			expect(result.value[0]?.count).toBe(1);
+			expect(result.value[0]?.externalId).toBe("tx-2");
+		});
+
+		it("returns ascending by date", async () => {
+			await createTransaction(db, accountId, makeCatTx({ externalId: "tx-1", date: "2026-03-10" }));
+			await createTransaction(db, accountId, makeCatTx({ externalId: "tx-2", date: "2026-03-01" }));
+
+			const result = await getReportRows(db);
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+
+			expect(result.value.map((r) => r.externalId)).toEqual(["tx-2", "tx-1"]);
 		});
 
 		it("returns empty array on empty database", async () => {
-			const result = await getCategorySummary(db);
+			const result = await getReportRows(db);
 			expect(result.ok).toBe(true);
 			if (!result.ok) return;
 			expect(result.value).toEqual([]);
+		});
+	});
+
+	describe("summarizeTransactions over seeded rows", () => {
+		it("aggregates spend by category and includes income from a credit", async () => {
+			await createTransaction(db, accountId, makeCatTx({ externalId: "tx-1", category: "Eating Out", amount: 10 }));
+			await createTransaction(db, accountId, makeCatTx({ externalId: "tx-2", category: "Eating Out", amount: 20 }));
+			await createTransaction(db, accountId, makeCatTx({ externalId: "tx-3", category: "Shopping", amount: 30 }));
+			await createTransaction(
+				db,
+				accountId,
+				makeCatTx({ externalId: "tx-4", category: "Income", direction: "credit", amount: 5000 }),
+			);
+
+			const rowsResult = await getReportRows(db);
+			expect(rowsResult.ok).toBe(true);
+			if (!rowsResult.ok) return;
+
+			const summary = summarizeTransactions(rowsResult.value);
+			const byCategory = Object.fromEntries(summary.spendByCategory.map((r) => [r.category, r]));
+
+			expect(byCategory["Eating Out"]?.total).toBe(30);
+			expect(byCategory["Eating Out"]?.count).toBe(2);
+			expect(byCategory.Shopping?.total).toBe(30);
+			expect(summary.income).toBe(5000);
+			expect(summary.spend).toBe(60);
+			expect(summary.savingsRate).not.toBeNull();
 		});
 	});
 });

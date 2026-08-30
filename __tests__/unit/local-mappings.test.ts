@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { applyMapping, matchTransaction } from "../../src/pipeline/local-mappings.js";
+import { applyMapping, matchTransaction, resolveMappedCategory } from "../../src/pipeline/local-mappings.js";
 import type { MerchantMapping } from "../../src/providers/types.js";
 import { makeTransaction } from "../helpers.js";
 
@@ -129,5 +129,46 @@ describe("applyMapping", () => {
 
 		// No text after match, so notes should be empty
 		expect(result.notes).toBe("");
+	});
+
+	it("routes a credit hitting a spend-category mapping to Refund, keeping the item", () => {
+		const tx = makeTransaction({
+			description: "WOOLWORTHS/1234 REFUND",
+			direction: "credit",
+		});
+		const mapping: MerchantMapping = {
+			match: "WOOLWORTHS/",
+			item: "Woolworths",
+			category: "Woolworths",
+		};
+
+		const result = applyMapping(tx, mapping);
+
+		expect(result.category).toBe("Refund");
+		expect(result.item).toBe("Woolworths");
+	});
+
+	it("leaves a debit mapping's category untouched", () => {
+		const tx = makeTransaction({ description: "NETFLIX.COM AUD", direction: "debit" });
+		const mapping: MerchantMapping = { match: "NETFLIX", item: "Netflix", category: "Subscriptions" };
+
+		const result = applyMapping(tx, mapping);
+
+		expect(result.category).toBe("Subscriptions");
+	});
+});
+
+describe("resolveMappedCategory", () => {
+	it("returns the mapping's category unchanged for debits", () => {
+		expect(resolveMappedCategory("debit", "Woolworths")).toBe("Woolworths");
+	});
+
+	it("returns Refund for a credit hitting a spend category", () => {
+		expect(resolveMappedCategory("credit", "Woolworths")).toBe("Refund");
+	});
+
+	it("keeps Income/Refund as-is for a credit", () => {
+		expect(resolveMappedCategory("credit", "Income")).toBe("Income");
+		expect(resolveMappedCategory("credit", "Refund")).toBe("Refund");
 	});
 });

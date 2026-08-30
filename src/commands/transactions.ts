@@ -1,15 +1,36 @@
 import { Command } from "commander";
-import { loadConfig } from "../config.js";
-import { createDb } from "../db/client.js";
+import { type AppConfig, loadConfig } from "../config.js";
+import { type AppDatabase, createDb } from "../db/client.js";
 import { formatCurrency } from "../formatters/networth.js";
 import { CATEGORIES } from "../providers/types.js";
+import { pivotMonthly } from "../reporting/monthly.js";
+import { detectRecurring } from "../reporting/recurring.js";
+import { summarizeTransactions } from "../reporting/summary.js";
 import {
-	getCategorySummary,
+	getReportRows,
 	getTransactions,
 	searchTransactions,
 	selectTransactions,
 	updateTransactions,
 } from "../services/transaction-service.js";
+
+/** Loads config and opens the DB, or exits the process with an error message. */
+function loadDb(): { db: AppDatabase; config: AppConfig } {
+	const configResult = loadConfig();
+	if (!configResult.ok) {
+		console.error(`Config error: ${configResult.error.code}`);
+		process.exit(1);
+	}
+	return { db: createDb(configResult.value.db_path), config: configResult.value };
+}
+
+function formatRate(rate: number | null): string {
+	return rate === null ? "—" : `${(rate * 100).toFixed(1)}%`;
+}
+
+function todayIso(): string {
+	return new Date().toISOString().slice(0, 10);
+}
 
 const listCommand = new Command("list")
 	.description("List transactions with optional filters")
@@ -20,12 +41,7 @@ const listCommand = new Command("list")
 	.option("--limit <n>", "Max transactions to show", "50")
 	.option("--format <type>", "Output format: table, csv, json", "table")
 	.action(async (options) => {
-		const configResult = loadConfig();
-		if (!configResult.ok) {
-			console.error(`Config error: ${configResult.error.code}`);
-			process.exit(1);
-		}
-		const db = createDb(configResult.value.db_path);
+		const { db } = loadDb();
 
 		const result = await getTransactions(db, {
 			dateFrom: options.from,
@@ -76,20 +92,15 @@ const listCommand = new Command("list")
 	});
 
 const summaryCommand = new Command("summary")
-	.description("Category breakdown of spending")
+	.description("Category breakdown of spending, plus income/net/savings-rate")
 	.option("--from <date>", "Start date (YYYY-MM-DD)")
 	.option("--to <date>", "End date (YYYY-MM-DD)")
 	.option("--account <id>", "Filter by account ID")
 	.option("--format <type>", "Output format: table, csv, json", "table")
 	.action(async (options) => {
-		const configResult = loadConfig();
-		if (!configResult.ok) {
-			console.error(`Config error: ${configResult.error.code}`);
-			process.exit(1);
-		}
-		const db = createDb(configResult.value.db_path);
+		const { db } = loadDb();
 
-		const result = await getCategorySummary(db, {
+		const result = await getReportRows(db, {
 			dateFrom: options.from,
 			dateTo: options.to,
 			accountId: options.account,
@@ -100,36 +111,39 @@ const summaryCommand = new Command("summary")
 			process.exit(1);
 		}
 
-		const rows = result.value;
+		const summary = summarizeTransactions(result.value);
 
-		if (rows.length === 0) {
+		if (result.value.length === 0) {
 			console.log("No transactions found.");
 			return;
 		}
 
 		if (options.format === "json") {
-			console.log(JSON.stringify(rows, null, 2));
+			console.log(JSON.stringify(summary, null, 2));
 			return;
 		}
 
 		if (options.format === "csv") {
 			console.log("category,total,count,percent");
-			const grandTotal = rows.reduce((sum, r) => sum + r.total, 0);
-			for (const r of rows) {
-				const pct = grandTotal > 0 ? ((r.total / grandTotal) * 100).toFixed(1) : "0.0";
+			for (const r of summary.spendByCategory) {
+				const pct = summary.spend > 0 ? ((r.total / summary.spend) * 100).toFixed(1) : "0.0";
 				console.log(`${r.category},${r.total.toFixed(2)},${r.count},${pct}`);
 			}
+			console.log(`spend,${summary.spend.toFixed(2)}`);
+			console.log(`refunds,${summary.refunds.toFixed(2)}`);
+			console.log(`income,${summary.income.toFixed(2)}`);
+			console.log(`net,${summary.net.toFixed(2)}`);
+			console.log(`savings_rate,${summary.savingsRate ?? ""}`);
 			return;
 		}
 
 		// Table format
-		const grandTotal = rows.reduce((sum, r) => sum + r.total, 0);
 		const dateRange = [options.from, options.to].filter(Boolean).join(" to ") || "all time";
 		console.log(`Category Breakdown (${dateRange})`);
 		console.log("─".repeat(60));
 
-		for (const r of rows) {
-			const pct = grandTotal > 0 ? (r.total / grandTotal) * 100 : 0;
+		for (const r of summary.spendByCategory) {
+			const pct = summary.spend > 0 ? (r.total / summary.spend) * 100 : 0;
 			const cat = r.category.padEnd(18);
 			const total = formatCurrency(r.total).padStart(10);
 			const count = `${r.count}`.padStart(4);
@@ -139,7 +153,121 @@ const summaryCommand = new Command("summary")
 		}
 
 		console.log("─".repeat(60));
-		console.log(`${"Total".padEnd(18)}${formatCurrency(grandTotal).padStart(10)}`);
+		console.log(`${"Spend".padEnd(18)}${formatCurrency(summary.spend).padStart(10)}`);
+		console.log(`${"Refunds".padEnd(18)}${formatCurrency(summary.refunds).padStart(10)}`);
+		console.log(`${"Income".padEnd(18)}${formatCurrency(summary.income).padStart(10)}`);
+		console.log(`${"Net".padEnd(18)}${formatCurrency(summary.net).padStart(10)}`);
+		console.log(`${"Savings rate".padEnd(18)}${formatRate(summary.savingsRate).padStart(10)}`);
+	});
+
+const monthlyCommand = new Command("monthly")
+	.description("Month x category pivot: spend, income, net, savings rate")
+	.option("--from <date>", "Start date (YYYY-MM-DD)")
+	.option("--to <date>", "End date (YYYY-MM-DD)")
+	.option("--account <id>", "Filter by account ID")
+	.option("--format <type>", "Output format: table, csv, json", "table")
+	.action(async (options) => {
+		const { db } = loadDb();
+
+		const result = await getReportRows(db, {
+			dateFrom: options.from,
+			dateTo: options.to,
+			accountId: options.account,
+		});
+
+		if (!result.ok) {
+			console.error(`Error: ${result.error.message}`);
+			process.exit(1);
+		}
+
+		const pivot = pivotMonthly(result.value);
+
+		if (pivot.months.length === 0) {
+			console.log("No transactions found.");
+			return;
+		}
+
+		if (options.format === "json") {
+			console.log(JSON.stringify(pivot, null, 2));
+			return;
+		}
+
+		const columns = [...pivot.categories, "Spend", "Income", "Net", "Rate"] as const;
+
+		if (options.format === "csv") {
+			console.log(["month", ...columns].join(","));
+			for (const m of pivot.months) {
+				const values = pivot.categories.map((c) => (m.byCategory[c] ?? 0).toFixed(2));
+				console.log(
+					[m.month, ...values, m.spend.toFixed(2), m.income.toFixed(2), m.net.toFixed(2), m.savingsRate ?? ""].join(
+						",",
+					),
+				);
+			}
+			return;
+		}
+
+		// Table format
+		console.log(`${"Month".padEnd(9)}${columns.map((c) => c.padStart(12)).join("")}`);
+		console.log("─".repeat(9 + columns.length * 12));
+		for (const m of pivot.months) {
+			const values = pivot.categories.map((c) => formatCurrency(m.byCategory[c] ?? 0).padStart(12));
+			console.log(
+				`${m.month.padEnd(9)}${values.join("")}${formatCurrency(m.spend).padStart(12)}${formatCurrency(m.income).padStart(12)}${formatCurrency(m.net).padStart(12)}${formatRate(m.savingsRate).padStart(12)}`,
+			);
+		}
+	});
+
+const recurringCommand = new Command("recurring")
+	.description("Detect recurring charges (subscriptions, bills) from spend history")
+	.option("--min-months <n>", "Minimum distinct months a charge must span", "3")
+	.option("--as-of <date>", "Reference date for lapsed detection (YYYY-MM-DD)", todayIso())
+	.option("--format <type>", "Output format: table, csv, json", "table")
+	.action(async (options) => {
+		const { db } = loadDb();
+
+		const result = await getReportRows(db);
+
+		if (!result.ok) {
+			console.error(`Error: ${result.error.message}`);
+			process.exit(1);
+		}
+
+		const charges = detectRecurring(result.value, {
+			minMonths: Number.parseInt(options.minMonths, 10),
+			asOf: options.asOf,
+		});
+
+		if (charges.length === 0) {
+			console.log("No recurring charges found.");
+			return;
+		}
+
+		if (options.format === "json") {
+			console.log(JSON.stringify(charges, null, 2));
+			return;
+		}
+
+		if (options.format === "csv") {
+			console.log("item,category,cadence,typical_amount,occurrences,first_seen,last_seen,possibly_lapsed");
+			for (const c of charges) {
+				console.log(
+					`"${c.item}",${c.category},${c.cadence},${c.typicalAmount.toFixed(2)},${c.occurrences},${c.firstSeen},${c.lastSeen},${c.possiblyLapsed}`,
+				);
+			}
+			return;
+		}
+
+		// Table format
+		console.log(
+			`${"Item".padEnd(24)}${"Category".padEnd(16)}${"Cadence".padEnd(13)}${"Typical".padStart(10)}  ${"Count".padStart(5)}  ${"First".padEnd(12)}${"Last".padEnd(12)}Lapsed?`,
+		);
+		console.log("─".repeat(110));
+		for (const c of charges) {
+			console.log(
+				`${c.item.padEnd(24)}${c.category.padEnd(16)}${c.cadence.padEnd(13)}${formatCurrency(c.typicalAmount).padStart(10)}  ${`${c.occurrences}`.padStart(5)}  ${c.firstSeen.padEnd(12)}${c.lastSeen.padEnd(12)}${c.possiblyLapsed ? "yes" : ""}`,
+			);
+		}
 	});
 
 const searchCommand = new Command("search")
@@ -148,12 +276,7 @@ const searchCommand = new Command("search")
 	.option("--limit <n>", "Max results", "20")
 	.option("--format <type>", "Output format: table, csv, json", "table")
 	.action(async (query: string, options) => {
-		const configResult = loadConfig();
-		if (!configResult.ok) {
-			console.error(`Config error: ${configResult.error.code}`);
-			process.exit(1);
-		}
-		const db = createDb(configResult.value.db_path);
+		const { db } = loadDb();
 
 		const result = await searchTransactions(db, query, options.limit ? Number.parseInt(options.limit, 10) : 20);
 
@@ -223,12 +346,7 @@ const setCommand = new Command("set")
 			process.exit(1);
 		}
 
-		const configResult = loadConfig();
-		if (!configResult.ok) {
-			console.error(`Config error: ${configResult.error.code}`);
-			process.exit(1);
-		}
-		const db = createDb(configResult.value.db_path);
+		const { db } = loadDb();
 
 		const selectResult = await selectTransactions(
 			db,
@@ -270,5 +388,7 @@ export const transactionsCommand = new Command("transactions")
 	.description("View and search transactions")
 	.addCommand(listCommand)
 	.addCommand(summaryCommand)
+	.addCommand(monthlyCommand)
+	.addCommand(recurringCommand)
 	.addCommand(searchCommand)
 	.addCommand(setCommand);

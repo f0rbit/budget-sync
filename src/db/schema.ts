@@ -27,6 +27,8 @@ const CATEGORIES = [
 	"Entertainment",
 	"Shopping",
 	"Travel",
+	"Income",
+	"Refund",
 	"Other",
 ] as const satisfies readonly Category[];
 

@@ -11,17 +11,26 @@ const EXCLUSIONS: ExclusionRule[] = [
 ];
 
 describe("filterTransaction", () => {
-	it("excludes credit direction transactions", () => {
+	it("passes through credit transactions (no longer blanket-excluded)", () => {
 		const tx = makeTransaction({ direction: "credit", description: "SALARY PAYMENT" });
+		const result = filterTransaction(tx, EXCLUSIONS);
+
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			expect(result.value).toBe(tx);
+		}
+	});
+
+	it("excludes a credit matching an exclusion regex the same as a debit would", () => {
+		const tx = makeTransaction({
+			direction: "credit",
+			description: "BETASHARES DIRECT Sell",
+		});
 		const result = filterTransaction(tx, EXCLUSIONS);
 
 		expect(result.ok).toBe(false);
 		if (!result.ok) {
-			expect(result.error.reason).toBe("Credit transaction (incoming money)");
-			expect(result.error.externalId).toBe(tx.id);
-			expect(result.error.rawDescription).toBe(tx.description);
-			expect(result.error.amount).toBe(tx.amount);
-			expect(result.error.direction).toBe("credit");
+			expect(result.error.reason).toBe("Investment transfer");
 		}
 	});
 
@@ -122,10 +131,10 @@ describe("filterTransactions", () => {
 
 		const { passed, excluded } = filterTransactions([debit, credit, excluded_pattern], EXCLUSIONS);
 
-		expect(passed).toHaveLength(1);
-		expect(passed[0]).toBe(debit);
-		expect(excluded).toHaveLength(2);
-		expect(excluded.map((e) => e.externalId)).toContain(credit.id);
+		expect(passed).toHaveLength(2);
+		expect(passed).toContain(debit);
+		expect(passed).toContain(credit);
+		expect(excluded).toHaveLength(1);
 		expect(excluded.map((e) => e.externalId)).toContain(excluded_pattern.id);
 	});
 
