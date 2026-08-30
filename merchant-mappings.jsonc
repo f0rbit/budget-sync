@@ -2,6 +2,19 @@
 	"$schema": "./merchant-mappings.schema.json",
 
 	"mappings": [
+		// --- Income ---
+		{ "match": "AMAZON SUPPORT S PDY", "item": "Salary", "category": "Income" },
+		{ "match": "CREDIT INTEREST", "item": "Interest", "category": "Income" },
+		{ "match": "VAS PAYMENT", "item": "ETF distribution", "category": "Income" },
+		{ "match": "VHY PAYMENT", "item": "ETF distribution", "category": "Income" },
+		{ "match": "FANG PAYMENT", "item": "ETF distribution", "category": "Income" },
+		{ "match": "QLTY DST", "item": "ETF distribution", "category": "Income" },
+		{ "match": "ESPO DST", "item": "ETF distribution", "category": "Income" },
+
+		// --- Refund ---
+		{ "match": "OSKO DEPOSIT", "item": "Osko deposit", "category": "Refund" },
+		{ "match": "EFTPOS CREDIT", "item": "Beem (split meal)", "category": "Refund" },
+
 		// --- Alcohol ---
 		{ "match": "FIREFLY BRISBANE", "item": "Firefly Brisbane", "category": "Alcohol" },
 		{ "match": "DAN MURPHY", "item": "Dan Murphy's", "category": "Alcohol" },
@@ -28,6 +41,11 @@
 		{ "match": "EVERYDAY EXTRA", "item": "Woolworths Everyday Extra", "category": "Subscriptions" },
 		{ "match": "AMZNPRIMEA", "item": "Amazon Prime", "category": "Subscriptions" },
 		{ "match": "AMAZON WEB SERVICES", "item": "AWS", "category": "Subscriptions" },
+		{ "match": "PADDLE.NET", "item": "Paddle.net", "category": "Subscriptions" },
+		{ "match": "ANOMALY", "item": "Anomaly", "category": "Subscriptions" },
+		{ "match": "CLOUDFLARE", "item": "Cloudflare", "category": "Subscriptions" },
+		{ "match": "ANTHROPIC", "item": "Claude", "category": "Subscriptions" },
+		{ "match": "CLAUDE.AI", "item": "Claude", "category": "Subscriptions" },
 
 		// --- Transport ---
 		{ "match": "ZLR*", "item": "Go Card", "category": "Transport" },
@@ -37,7 +55,13 @@
 
 		// --- Bills ---
 		{ "match": "EZI*GIGACOMM", "item": "Gigacomm Internet", "category": "Bills" },
+		{ "match": "GIGACOMM", "item": "Gigacomm Internet", "category": "Bills" },
 		{ "match": "WOOLIESMOBILE", "item": "Woolies Mobile", "category": "Bills" },
+		{ "match": "WOOLIES MOBILE", "item": "Woolies Mobile", "category": "Bills" },
+		{ "match": "ORIGIN INTERNET", "item": "Origin Broadband", "category": "Bills" },
+		{ "match": "ORIGIN ENERGY", "item": "Origin Energy", "category": "Bills" },
+		{ "match": "RED ENERGY", "item": "Red Energy", "category": "Bills" },
+		{ "match": "ACCOUNT-KEEPING FEE", "item": "Account-keeping fee", "category": "Bills" },
 
 		// --- Health ---
 		{ "match": "CHEMIST WAREHOUSE", "item": "Chemist Warehouse", "category": "Health" },
@@ -239,7 +263,7 @@
 		{
 			"match": "NINTENDO",
 			"item": "Nintendo",
-			"category": "Entertainment"
+			"category": "Subscriptions"
 		},
 		{
 			"match": "CASEWAY MACARTHUR",
@@ -638,6 +662,9 @@
 		{ "match": "To 248-029 009206534", "reason": "Betashares investment transfer" },
 		{ "match": "Withdrawal           04Apr23:48 Speakers", "reason": "Transfer to fund DJ City speakers (counted under Laha Pty Ltd)" },
 		{ "match": "RENT MR MAXWELL", "reason": "Roommate rent deposit" },
-		{ "match": "To 1310068128040", "reason": "Savings → Everyday transfer" }
+		{ "match": "To 1310068128040", "reason": "Savings → Everyday transfer" },
+		{ "match": "From 1310073020240", "reason": "Savings → Everyday transfer (incoming)" },
+		{ "match": "From 4601842000265140", "reason": "Credit card → account transfer (incoming)" },
+		{ "match": "From 1310068128040", "reason": "Own-account transfer (incoming)" }
 	]
 }
