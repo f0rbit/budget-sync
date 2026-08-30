@@ -2,7 +2,14 @@ import { Command } from "commander";
 import { loadConfig } from "../config.js";
 import { createDb } from "../db/client.js";
 import { formatCurrency } from "../formatters/networth.js";
-import { getCategorySummary, getTransactions, searchTransactions } from "../services/transaction-service.js";
+import { CATEGORIES } from "../providers/types.js";
+import {
+	getCategorySummary,
+	getTransactions,
+	searchTransactions,
+	selectTransactions,
+	updateTransactions,
+} from "../services/transaction-service.js";
 
 const listCommand = new Command("list")
 	.description("List transactions with optional filters")
@@ -188,8 +195,80 @@ const searchCommand = new Command("search")
 		console.log(`\n${txns.length} result(s)`);
 	});
 
+const setCommand = new Command("set")
+	.description("Update category/item/notes on transactions, selected by id or by --match/--from/--to")
+	.argument("[ids...]", "Transaction id(s) to update")
+	.option("--category <cat>", `New category (one of: ${CATEGORIES.join(", ")})`)
+	.option("--item <name>", "New item name")
+	.option("--notes <text>", "New notes")
+	.option("--match <substring>", "Select transactions whose raw description contains this substring")
+	.option("--from <date>", "Select transactions from this date (YYYY-MM-DD), alternative selector")
+	.option("--to <date>", "Select transactions up to this date (YYYY-MM-DD), alternative selector")
+	.action(async (ids: string[], options) => {
+		if (!options.category && !options.item && !options.notes) {
+			console.error("Error: at least one of --category, --item, --notes is required.");
+			process.exit(1);
+		}
+
+		if (options.category && !CATEGORIES.includes(options.category)) {
+			console.error(`Error: invalid category "${options.category}". Valid: ${CATEGORIES.join(", ")}`);
+			process.exit(1);
+		}
+
+		const hasIdSelector = ids.length > 0;
+		const hasFilterSelector = Boolean(options.match || options.from || options.to);
+
+		if (!hasIdSelector && !hasFilterSelector) {
+			console.error("Error: no selector given. Pass transaction id(s), or --match/--from/--to.");
+			process.exit(1);
+		}
+
+		const configResult = loadConfig();
+		if (!configResult.ok) {
+			console.error(`Config error: ${configResult.error.code}`);
+			process.exit(1);
+		}
+		const db = createDb(configResult.value.db_path);
+
+		const selectResult = await selectTransactions(
+			db,
+			hasIdSelector ? { ids } : { match: options.match, dateFrom: options.from, dateTo: options.to },
+		);
+		if (!selectResult.ok) {
+			console.error(`Error: ${selectResult.error.message}`);
+			process.exit(1);
+		}
+
+		const before = selectResult.value;
+		if (before.length === 0) {
+			console.log("No transactions matched.");
+			return;
+		}
+
+		const updateResult = await updateTransactions(
+			db,
+			before.map((tx) => tx.id),
+			{ category: options.category, item: options.item, notes: options.notes },
+		);
+		if (!updateResult.ok) {
+			console.error(`Error: ${updateResult.error.message}`);
+			process.exit(1);
+		}
+
+		const beforeById = new Map(before.map((tx) => [tx.id, tx]));
+		console.log(`Updated ${updateResult.value.length} transaction(s):\n`);
+		for (const after of updateResult.value) {
+			const prev = beforeById.get(after.id);
+			console.log(`  ${after.date}  $${after.amount.toFixed(2).padStart(8)}  ${after.rawDescription}`);
+			console.log(`    category: ${prev?.category} → ${after.category}`);
+			console.log(`    item:     ${prev?.item} → ${after.item}`);
+			console.log(`    notes:    ${JSON.stringify(prev?.notes ?? "")} → ${JSON.stringify(after.notes ?? "")}`);
+		}
+	});
+
 export const transactionsCommand = new Command("transactions")
 	.description("View and search transactions")
 	.addCommand(listCommand)
 	.addCommand(summaryCommand)
-	.addCommand(searchCommand);
+	.addCommand(searchCommand)
+	.addCommand(setCommand);

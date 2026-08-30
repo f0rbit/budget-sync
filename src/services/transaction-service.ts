@@ -1,5 +1,5 @@
 import { type Result, try_catch_async } from "@f0rbit/corpus";
-import { and, desc, eq, gte, like, lte, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, like, lte, or, sql } from "drizzle-orm";
 import type { AppDatabase } from "../db/client.js";
 import { accounts, transactions } from "../db/schema.js";
 import { type DbError, errors } from "../errors.js";
@@ -213,5 +213,66 @@ export async function getExistingDebitsForDedup(
 			return rows as DedupCandidate[];
 		},
 		(e) => errors.dbError(`Failed to query transactions for dedup: ${e}`, e),
+	);
+}
+
+// === Manual edit ("transactions set") helpers ===
+
+export type TransactionSelector = { ids: string[] } | { match?: string; dateFrom?: string; dateTo?: string };
+
+export interface TransactionUpdate {
+	category?: Category;
+	item?: string;
+	notes?: string;
+}
+
+export async function selectTransactions(
+	db: AppDatabase,
+	selector: TransactionSelector,
+): Promise<Result<TransactionRow[], DbError>> {
+	return try_catch_async(
+		async () => {
+			if ("ids" in selector) {
+				if (selector.ids.length === 0) return [];
+				return db.select().from(transactions).where(inArray(transactions.id, selector.ids)).all();
+			}
+
+			const conditions = [];
+			if (selector.match) {
+				conditions.push(like(transactions.rawDescription, `%${selector.match}%`));
+			}
+			if (selector.dateFrom) conditions.push(gte(transactions.date, selector.dateFrom));
+			if (selector.dateTo) conditions.push(lte(transactions.date, selector.dateTo));
+
+			let query = db.select().from(transactions).orderBy(desc(transactions.date));
+			if (conditions.length > 0) {
+				query = query.where(and(...conditions)) as typeof query;
+			}
+			return query.all();
+		},
+		(e) => errors.dbError(`Failed to select transactions: ${e}`, e),
+	);
+}
+
+export async function updateTransactions(
+	db: AppDatabase,
+	ids: string[],
+	update: TransactionUpdate,
+): Promise<Result<TransactionRow[], DbError>> {
+	return try_catch_async(
+		async () => {
+			const set: Partial<typeof transactions.$inferInsert> = {};
+			if (update.category !== undefined) set.category = update.category;
+			if (update.item !== undefined) set.item = update.item;
+			if (update.notes !== undefined) set.notes = update.notes;
+
+			const updated: TransactionRow[] = [];
+			for (const id of ids) {
+				const row = db.update(transactions).set(set).where(eq(transactions.id, id)).returning().get();
+				if (row) updated.push(row);
+			}
+			return updated;
+		},
+		(e) => errors.dbError(`Failed to update transactions: ${e}`, e),
 	);
 }
