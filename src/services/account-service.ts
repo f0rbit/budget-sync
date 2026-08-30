@@ -1,8 +1,8 @@
 import { type Result, ok, try_catch_async } from "@f0rbit/corpus";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import type { AppDatabase } from "../db/client.js";
-import { accounts } from "../db/schema.js";
-import { type DbError, errors } from "../errors.js";
+import { accounts, contributions, holdings, snapshots, transactions } from "../db/schema.js";
+import { type DbError, type MergeCollision, errors } from "../errors.js";
 import type { AccountInfo } from "../providers/types.js";
 
 export type AccountRow = typeof accounts.$inferSelect;
@@ -119,6 +119,134 @@ export async function deactivateAccount(db: AppDatabase, accountId: string): Pro
 			return updated;
 		},
 		(e) => errors.dbError(`Failed to deactivate account: ${e}`, e),
+	);
+}
+
+export interface MergeAccountsResult {
+	fromAccountId: string;
+	intoAccountId: string;
+	transactionsMoved: number;
+	snapshotsMoved: number;
+	holdingsMoved: number;
+	contributionsMoved: number;
+	dryRun: boolean;
+}
+
+class MergeConflictSignal extends Error {
+	constructor(readonly collisions: MergeCollision[]) {
+		super("Merge would violate a unique constraint");
+	}
+}
+
+/**
+ * Merge one account into another: reassigns every row referencing `fromAccountId`
+ * (transactions, snapshots, holdings, contributions) to `intoAccountId`, then
+ * removes the now-empty `from` account. Runs inside one DB transaction, so a
+ * unique-constraint collision (duplicate transaction external_id, or a
+ * snapshot already present for the same account+date) aborts with no partial
+ * writes. Pass `dryRun: true` to preview the move without writing.
+ */
+export async function mergeAccounts(
+	db: AppDatabase,
+	fromAccountId: string,
+	intoAccountId: string,
+	options?: { dryRun?: boolean },
+): Promise<Result<MergeAccountsResult, DbError>> {
+	return try_catch_async(
+		async () => {
+			if (fromAccountId === intoAccountId) {
+				throw new Error("Cannot merge an account into itself");
+			}
+
+			const fromAccount = db.select().from(accounts).where(eq(accounts.id, fromAccountId)).get();
+			if (!fromAccount) throw new Error(`Account not found: ${fromAccountId}`);
+
+			const intoAccount = db.select().from(accounts).where(eq(accounts.id, intoAccountId)).get();
+			if (!intoAccount) throw new Error(`Account not found: ${intoAccountId}`);
+
+			const movingTx = db.select().from(transactions).where(eq(transactions.accountId, fromAccountId)).all();
+			const otherExternalIds = new Set(
+				db
+					.select({ externalId: transactions.externalId })
+					.from(transactions)
+					.where(ne(transactions.accountId, fromAccountId))
+					.all()
+					.flatMap((r) => (r.externalId ? [r.externalId] : [])),
+			);
+			const txCollisions: MergeCollision[] = movingTx
+				.filter((t) => t.externalId !== null && otherExternalIds.has(t.externalId))
+				.map((t) => ({ table: "transactions" as const, externalId: t.externalId as string }));
+
+			const movingSnaps = db.select().from(snapshots).where(eq(snapshots.accountId, fromAccountId)).all();
+			const intoSnapDates = new Set(
+				db
+					.select({ date: snapshots.date })
+					.from(snapshots)
+					.where(eq(snapshots.accountId, intoAccountId))
+					.all()
+					.map((r) => r.date),
+			);
+			const snapCollisions: MergeCollision[] = movingSnaps
+				.filter((s) => intoSnapDates.has(s.date))
+				.map((s) => ({ table: "snapshots" as const, date: s.date }));
+
+			const collisions = [...txCollisions, ...snapCollisions];
+			if (collisions.length > 0) {
+				throw new MergeConflictSignal(collisions);
+			}
+
+			const movingHoldings = db.select().from(holdings).where(eq(holdings.accountId, fromAccountId)).all();
+			const movingContributions = db
+				.select()
+				.from(contributions)
+				.where(eq(contributions.accountId, fromAccountId))
+				.all();
+
+			if (options?.dryRun) {
+				return {
+					fromAccountId,
+					intoAccountId,
+					transactionsMoved: movingTx.length,
+					snapshotsMoved: movingSnaps.length,
+					holdingsMoved: movingHoldings.length,
+					contributionsMoved: movingContributions.length,
+					dryRun: true,
+				};
+			}
+
+			return db.transaction((tx) => {
+				tx.update(transactions)
+					.set({ accountId: intoAccountId })
+					.where(eq(transactions.accountId, fromAccountId))
+					.run();
+				tx.update(snapshots).set({ accountId: intoAccountId }).where(eq(snapshots.accountId, fromAccountId)).run();
+				tx.update(holdings).set({ accountId: intoAccountId }).where(eq(holdings.accountId, fromAccountId)).run();
+				tx.update(contributions)
+					.set({ accountId: intoAccountId })
+					.where(eq(contributions.accountId, fromAccountId))
+					.run();
+				tx.delete(accounts).where(eq(accounts.id, fromAccountId)).run();
+
+				return {
+					fromAccountId,
+					intoAccountId,
+					transactionsMoved: movingTx.length,
+					snapshotsMoved: movingSnaps.length,
+					holdingsMoved: movingHoldings.length,
+					contributionsMoved: movingContributions.length,
+					dryRun: false,
+				};
+			});
+		},
+		(e) => {
+			if (e instanceof MergeConflictSignal) {
+				return errors.mergeConflict(
+					e.collisions,
+					`Merge would violate unique constraints: ${e.collisions.length} collision(s)`,
+				);
+			}
+			return errors.dbError(`Failed to merge accounts: ${e}`, e);
+		},
 	);
 }
 

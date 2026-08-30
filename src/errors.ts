@@ -17,7 +17,10 @@ export type ConfigError =
 // === Database Errors ===
 export type DbError =
 	| { code: "DB_ERROR"; message: string; cause?: unknown }
-	| { code: "DUPLICATE"; message: string; externalId: string };
+	| { code: "DUPLICATE"; message: string; externalId: string }
+	| { code: "MERGE_CONFLICT"; message: string; collisions: MergeCollision[] };
+
+export type MergeCollision = { table: "transactions"; externalId: string } | { table: "snapshots"; date: string };
 
 // === Pipeline Errors ===
 export type PipelineError =
@@ -84,6 +87,11 @@ export const errors = {
 		code: "DUPLICATE",
 		message,
 		externalId,
+	}),
+	mergeConflict: (collisions: MergeCollision[], message: string): DbError => ({
+		code: "MERGE_CONFLICT",
+		message,
+		collisions,
 	}),
 
 	mappingLoadFailed: (message: string): PipelineError => ({
