@@ -663,8 +663,8 @@
 		{ "match": "Withdrawal           04Apr23:48 Speakers", "reason": "Transfer to fund DJ City speakers (counted under Laha Pty Ltd)" },
 		{ "match": "RENT MR MAXWELL", "reason": "Roommate rent deposit" },
 		{ "match": "To 1310068128040", "reason": "Savings → Everyday transfer" },
-		{ "match": "From 1310073020240", "reason": "Savings → Everyday transfer (incoming)" },
-		{ "match": "From 4601842000265140", "reason": "Credit card → account transfer (incoming)" },
-		{ "match": "From 1310068128040", "reason": "Own-account transfer (incoming)" }
+		{ "match": "From\\s+1310073020240", "reason": "Savings → Everyday transfer (incoming)" },
+		{ "match": "From\\s+4601842000265140", "reason": "Credit card → account transfer (incoming)" },
+		{ "match": "From\\s+1310068128040", "reason": "Own-account transfer (incoming)" }
 	]
 }
