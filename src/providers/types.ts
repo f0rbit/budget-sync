@@ -26,9 +26,20 @@ export const CATEGORIES = [
 	"Entertainment",
 	"Shopping",
 	"Travel",
+	"Income",
+	"Refund",
 	"Other",
 ] as const;
 export type Category = (typeof CATEGORIES)[number];
+
+export const NON_SPEND_CATEGORIES = ["Income", "Refund"] as const satisfies readonly Category[];
+export type NonSpendCategory = (typeof NON_SPEND_CATEGORIES)[number];
+
+export function isSpendCategory(category: Category): boolean {
+	return !(NON_SPEND_CATEGORIES as readonly Category[]).includes(category);
+}
+
+export const UNMAPPED_CREDIT_NOTE = "unmapped credit — verify";
 
 export const SYNC_STATUSES = ["success", "partial", "failed"] as const;
 export type SyncStatus = (typeof SYNC_STATUSES)[number];
@@ -232,6 +243,8 @@ export const CATEGORY_DESCRIPTIONS: Record<Category, string> = {
 		"Events, concerts, museums, galleries (ACCA, NGV, QPAC, Sea Life), games (Nintendo), badminton, cinema",
 	Shopping: "Clothing, electronics (JB Hi-Fi, Digidirect), homewares, gifts, accessories, Officeworks",
 	Travel: "Flights, accommodation, travel insurance, passports/visas, overseas trip spending",
+	Income: "Incoming money only: salary, interest, dividends/distributions (Vas/Vhy/Fang Payment, Qlty/Espo Dst)",
+	Refund: "Incoming money only: friends paying you back (Osko/Beem), merchant refunds, PayPal credits",
 	Other: "Anything that doesn't fit the above categories",
 };
 
